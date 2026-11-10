@@ -138,10 +138,16 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Trigger App Runner Deployment
-        if: steps.aws-auth.outcome == 'success' && secrets.APPRUNNER_SERVICE_ARN != ''
+        if: steps.aws-auth.outcome == 'success'
+        env:
+          APPRUNNER_SERVICE_ARN: ${{ secrets.APPRUNNER_SERVICE_ARN }}
         run: |
-          echo "Triggering AWS App Runner deployment for service ARN: ${{ secrets.APPRUNNER_SERVICE_ARN }}"
-          aws apprunner start-deployment \
-            --service-arn "${{ secrets.APPRUNNER_SERVICE_ARN }}" \
-            --region ${{ env.AWS_REGION }}
-          echo "Deployment initiated successfully."
+          if [ -n "$APPRUNNER_SERVICE_ARN" ]; then
+            echo "Triggering AWS App Runner deployment for service ARN: $APPRUNNER_SERVICE_ARN"
+            aws apprunner start-deployment \
+              --service-arn "$APPRUNNER_SERVICE_ARN" \
+              --region ${{ env.AWS_REGION }}
+            echo "Deployment initiated successfully."
+          else
+            echo "APPRUNNER_SERVICE_ARN secret not configured. Skipping App Runner deployment."
+          fi
