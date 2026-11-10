@@ -1,0 +1,147 @@
+name: CI/CD Pipeline - OpenInvite
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      deploy_to_aws:
+        description: 'Deploy to AWS App Runner after building'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: open-invite
+  APP_RUNNER_SERVICE_NAME: prod-openinvite-app
+
+jobs:
+  # ============================================================================
+  # 1. Quality Assurance & Security Auditing
+  # ============================================================================
+  test-and-audit:
+    name: Test & Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Execute Automated Test Suite (45 Tests)
+        env:
+          FLASK_ENV: testing
+          SECRET_KEY: test-key-ci-environment-run
+          DATABASE_URL: sqlite:///:memory:
+          STORAGE_BACKEND: local
+          LOCAL_STORAGE_PATH: ./uploads
+          EMAIL_PROVIDER: console
+        run: |
+          PYTHONPATH=. pytest -v --junitxml=test-results.xml
+
+      - name: Dependency Security Audit (pip-audit)
+        run: |
+          pip-audit --desc
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results.xml
+
+  # ============================================================================
+  # 2. Container Build & Push to Amazon ECR
+  # ============================================================================
+  build-and-push-ecr:
+    name: Build & Push ECR Image
+    needs: test-and-audit
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        id: aws-auth
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        if: steps.aws-auth.outcome == 'success'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        if: steps.aws-auth.outcome == 'success'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build, Tag, and Push Docker Image to Amazon ECR
+        if: steps.aws-auth.outcome == 'success'
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Building Docker container image: $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker build \
+            --file docker/Dockerfile \
+            --tag $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            --tag $REGISTRY/$ECR_REPOSITORY:latest \
+            .
+          
+          echo "Pushing Docker container image to Amazon ECR..."
+          docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $REGISTRY/$ECR_REPOSITORY:latest
+          echo "IMAGE_URI=$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Report AWS Auth Skipping (Informational)
+        if: steps.aws-auth.outcome != 'success'
+        run: |
+          echo "::notice ::AWS credentials (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY) not configured in GitHub Secrets. Container push skipped. Configure repository secrets in Settings > Secrets and variables > Actions to enable automatic ECR push."
+
+  # ============================================================================
+  # 3. Trigger AWS App Runner Deployment
+  # ============================================================================
+  deploy-app-runner:
+    name: Deploy to AWS App Runner
+    needs: build-and-push-ecr
+    if: (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || inputs.deploy_to_aws == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS Credentials
+        id: aws-auth
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Trigger App Runner Deployment
+        if: steps.aws-auth.outcome == 'success' && secrets.APPRUNNER_SERVICE_ARN != ''
+        run: |
+          echo "Triggering AWS App Runner deployment for service ARN: ${{ secrets.APPRUNNER_SERVICE_ARN }}"
+          aws apprunner start-deployment \
+            --service-arn "${{ secrets.APPRUNNER_SERVICE_ARN }}" \
+            --region ${{ env.AWS_REGION }}
+          echo "Deployment initiated successfully."

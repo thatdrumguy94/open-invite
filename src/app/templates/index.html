@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero">
+  <h1>OpenInvite</h1>
+  <p>
+    A modern, self-hosted event invitation and RSVP platform. Run standalone in a lightweight container or scale effortlessly on your own cloud infrastructure.
+  </p>
+  <div class="badge-group">
+    <span class="badge">Open Source</span>
+    <span class="badge">Python 3.12</span>
+    <span class="badge">Docker Multi-Stage</span>
+    <span class="badge">ReportLab PDF Engine</span>
+    <span class="badge">SQLite / PostgreSQL</span>
+    <span class="badge">Local / Amazon S3</span>
+  </div>
+</section>
+
+<section>
+  <div class="grid">
+    <div class="card">
+      <h3>Container Compute</h3>
+      <p>
+        Packaged with a security-hardened Dockerfile running Python 3.12-slim and a non-root execution model. Optimized for zero-downtime deployment on AWS App Runner or ECS Fargate.
+      </p>
+      <span class="status-pill online">Compute Ready</span>
+    </div>
+
+    <div class="card">
+      <h3>Document Storage (S3)</h3>
+      <p>
+        Dynamic PDF invitation generation using ReportLab combined with custom host uploads, stored securely in Amazon S3 with presigned URL access control.
+      </p>
+      <span class="status-pill online">Backend: {{ storage_backend }}</span>
+    </div>
+
+    <div class="card">
+      <h3>Relational Persistence (RDS)</h3>
+      <p>
+        Structured data modeling with SQLAlchemy and PostgreSQL on Amazon RDS. Tracks user accounts, event metadata, individual guest RSVP states, and message dispatch logs.
+      </p>
+      <span class="status-pill online">Relational Engine</span>
+    </div>
+
+    <div class="card">
+      <h3>Transactional Communications</h3>
+      <p>
+        Automated email dispatch for personalized event invitations and reminder notifications with one-click RSVP links powered by Amazon SES or SendGrid.
+      </p>
+      <span class="status-pill online">Provider: {{ email_provider }}</span>
+    </div>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+
+{% block title %}RSVP: {{ event.title }}{% endblock %}
+
+{% block content %}
+<div class="form-card" style="max-width: 680px;">
+  <!-- Event Summary Header -->
+  <div style="text-align: center; border-bottom: 1px solid var(--color-border); padding-bottom: 1.5rem; margin-bottom: 1.5rem;">
+    <span class="badge" style="margin-bottom: 0.5rem;">{{ event.event_type }}</span>
+    <h1 style="color: var(--color-royal-navy); font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem;">
+      {{ event.title }}
+    </h1>
+
+    <div style="font-size: 0.95rem; color: #475569; margin-bottom: 0.4rem;">
+      📅 <strong>{{ event.event_date.strftime('%A, %B %d, %Y at %I:%M %p') }}</strong>
+    </div>
+    <div style="font-size: 0.95rem; color: #475569; margin-bottom: 0.75rem;">
+      📍 {{ event.location }}
+    </div>
+
+    {% if event.description %}
+      <p style="font-size: 0.9rem; color: #64748B; font-style: italic; max-width: 520px; margin: 0 auto 1rem auto;">
+        &ldquo;{{ event.description }}&rdquo;
+      </p>
+    {% endif %}
+
+    {% if pdf_url %}
+      <a href="{{ pdf_url }}" target="_blank" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 0.35rem;">
+        <span>📄 View Invitation PDF</span>
+      </a>
+    {% endif %}
+  </div>
+
+  <!-- Guest Greeting & Allowance Notice -->
+  <div style="background-color: #EFF6FF; border: 1.5px solid #BFDBFE; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1.5rem;">
+    <div style="font-weight: 700; color: var(--color-royal-navy); font-size: 1.05rem; margin-bottom: 0.25rem;">
+      Hello, {{ guest.guest_name }}!
+    </div>
+    <div style="font-size: 0.875rem; color: #1E3A8A;">
+      {% if guest.allowed_additional_guests > 0 %}
+        Your invitation includes a total of <strong>1 primary guest</strong> plus up to <strong>{{ guest.allowed_additional_guests }} additional guest(s)</strong>.
+      {% else %}
+        This invitation is reserved for <strong>1 guest</strong>.
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- If already submitted, show summary -->
+  {% if guest.rsvp_status != 'Pending' %}
+    <div style="background-color: #F8FAFC; border: 1px solid var(--color-border); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+      <div style="font-size: 0.8rem; text-transform: uppercase; font-weight: 700; color: #64748B; margin-bottom: 0.4rem;">
+        Current Response Status:
+      </div>
+      <div style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem;">
+        {% if guest.rsvp_status == 'Accepted' %}
+          <span style="color: #065F46;">✅ Attending ({{ 1 + guest.plus_ones }} Total Attendees)</span>
+        {% else %}
+          <span style="color: #991B1B;">❌ Unable to Attend</span>
+        {% endif %}
+      </div>
+
+      {% if guest.rsvp_status == 'Accepted' and guest.additional_attendees %}
+        <div style="font-size: 0.85rem; color: #334155; margin-top: 0.5rem; border-top: 1px solid var(--color-border); padding-top: 0.5rem;">
+          <div style="font-weight: 600; margin-bottom: 0.25rem;">Additional Attendees Registered:</div>
+          <ul style="padding-left: 1.25rem; margin: 0;">
+            {% for att in guest.additional_attendees %}
+              <li><strong>{{ att.name }}</strong> {% if att.dietary_notes %}<span style="color: #64748B;">({{ att.dietary_notes }})</span>{% endif %}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+
+      {% if guest.notes %}
+        <div style="font-size: 0.85rem; color: #64748B; margin-top: 0.5rem;">
+          <em>Note: &ldquo;{{ guest.notes }}&rdquo;</em>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <!-- RSVP Submission Form -->
+  <form method="POST" action="/rsvp/{{ guest.rsvp_token }}">
+    <div class="form-group">
+      <label class="form-label">Will you be attending?</label>
+      <div class="radio-options">
+        <label class="radio-card" id="card-accept" onclick="selectStatus('Accepted')">
+          <input type="radio" name="status" value="Accepted" id="radio-accept" {% if guest.rsvp_status == 'Accepted' or guest.rsvp_status == 'Pending' %}checked{% endif %} onchange="handleStatusChange(this.value)">
+          <div style="font-weight: 700; color: #065F46; margin-top: 0.25rem;">🎉 Accept with Pleasure</div>
+          <div style="font-size: 0.8rem; color: #64748B;">I will be there to celebrate!</div>
+        </label>
+
+        <label class="radio-card" id="card-decline" onclick="selectStatus('Declined')">
+          <input type="radio" name="status" value="Declined" id="radio-decline" {% if guest.rsvp_status == 'Declined' %}checked{% endif %} onchange="handleStatusChange(this.value)">
+          <div style="font-weight: 700; color: #991B1B; margin-top: 0.25rem;">Regretfully Decline</div>
+          <div style="font-size: 0.8rem; color: #64748B;">Sorry, I am unable to attend.</div>
+        </label>
+      </div>
+    </div>
+
+    <!-- Additional Guests Section (Visible only if status == 'Accepted' and allowed > 0) -->
+    <div id="additional-guests-section" style="{% if guest.rsvp_status == 'Declined' or guest.allowed_additional_guests == 0 %}display: none;{% endif %} margin-top: 1.5rem; background-color: #F8FAFC; border: 1px solid var(--color-border); border-radius: 8px; padding: 1.25rem;">
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="plus_ones">Number of Additional Guests Accompanying You</label>
+        <select id="plus_ones" name="plus_ones" class="form-control" onchange="renderAdditionalAttendeeInputs(this.value)">
+          {% for i in range(guest.allowed_additional_guests + 1) %}
+            <option value="{{ i }}" {% if guest.plus_ones == i %}selected{% endif %}>
+              {% if i == 0 %}0 additional guests (Just me){% elif i == 1 %}1 additional guest (+1){% else %}{{ i }} additional guests (+{{ i }}){% endif %}
+            </option>
+          {% endfor %}
+        </select>
+        <div class="form-help">Maximum allowed by host for this invitation: {{ guest.allowed_additional_guests }}.</div>
+      </div>
+
+      <!-- Dynamic Container for Individual Additional Attendee Details -->
+      <div id="attendee-details-container">
+        <!-- Rendered via JavaScript -->
+      </div>
+    </div>
+
+    <!-- Notes & Dietary Restrictions -->
+    <div class="form-group" style="margin-top: 1.5rem;">
+      <label class="form-label" for="notes">Notes or Message for the Host</label>
+      <textarea id="notes" name="notes" class="form-control" rows="2" placeholder="Dietary restrictions, allergies, or a congratulatory note...">{{ guest.notes or '' }}</textarea>
+    </div>
+
+    <div style="margin-top: 2rem;">
+      <button type="submit" class="btn btn-primary" style="width: 100%; padding: 0.85rem; font-size: 1rem;">
+        {% if guest.rsvp_status != 'Pending' %}Update RSVP Confirmation{% else %}Submit RSVP Confirmation{% endif %}
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const maxAllowed = {{ guest.allowed_additional_guests }};
+  const existingAttendees = [
+    {% for att in guest.additional_attendees %}
+      { name: {{ att.name|tojson }}, diet: {{ (att.dietary_notes or '')|tojson }} },
+    {% endfor %}
+  ];
+
+  function selectStatus(status) {
+    document.getElementById('radio-' + status.toLowerCase()).checked = true;
+    handleStatusChange(status);
+  }
+
+  function handleStatusChange(status) {
+    const additionalSection = document.getElementById('additional-guests-section');
+    if (status === 'Accepted' && maxAllowed > 0) {
+      additionalSection.style.display = 'block';
+    } else {
+      additionalSection.style.display = 'none';
+    }
+  }
+
+  function renderAdditionalAttendeeInputs(count) {
+    const container = document.getElementById('attendee-details-container');
+    container.innerHTML = '';
+    const num = parseInt(count, 10) || 0;
+
+    if (num > 0) {
+      const heading = document.createElement('div');
+      heading.style.fontWeight = '700';
+      heading.style.fontSize = '0.9rem';
+      heading.style.color = 'var(--color-royal-navy)';
+      heading.style.margin = '1rem 0 0.5rem 0';
+      heading.textContent = 'Please provide details for each attending guest:';
+      container.appendChild(heading);
+    }
+
+    for (let i = 1; i <= num; i++) {
+      const card = document.createElement('div');
+      card.style.background = '#FFFFFF';
+      card.style.border = '1px solid var(--color-border)';
+      card.style.borderRadius = '6px';
+      card.style.padding = '0.75rem';
+      card.style.marginBottom = '0.75rem';
+
+      const prevName = existingAttendees[i - 1] ? existingAttendees[i - 1].name : '';
+      const prevDiet = existingAttendees[i - 1] ? existingAttendees[i - 1].diet : '';
+
+      card.innerHTML = `
+        <div style="font-weight: 600; font-size: 0.85rem; color: #334155; margin-bottom: 0.4rem;">
+          Additional Guest #${i}
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+          <div>
+            <label style="display: block; font-size: 0.75rem; color: #64748B; margin-bottom: 0.2rem;">Full Name *</label>
+            <input type="text" name="additional_name_${i}" value="${prevName}" required placeholder="Guest Name" class="form-control" style="font-size: 0.85rem; padding: 0.4rem 0.6rem;">
+          </div>
+          <div>
+            <label style="display: block; font-size: 0.75rem; color: #64748B; margin-bottom: 0.2rem;">Dietary / Meal Preference</label>
+            <input type="text" name="additional_diet_${i}" value="${prevDiet}" placeholder="e.g. Vegetarian, Gluten-Free, None" class="form-control" style="font-size: 0.85rem; padding: 0.4rem 0.6rem;">
+          </div>
+        </div>
+      `;
+      container.appendChild(card);
+    }
+  }
+
+  // Initial render on load
+  document.addEventListener('DOMContentLoaded', function() {
+    const selectElem = document.getElementById('plus_ones');
+    if (selectElem) {
+      renderAdditionalAttendeeInputs(selectElem.value);
+    }
+  });
+</script>
+{% endblock %}

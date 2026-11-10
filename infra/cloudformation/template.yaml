@@ -1,0 +1,293 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  AWS CloudFormation Template for OpenInvite Event Invitation System.
+  Deploys Amazon S3, Amazon RDS (PostgreSQL 15), Amazon ECR, and AWS App Runner
+  with secure VPC connectivity and IAM least-privilege roles.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: prod
+    Description: Deployment environment identifier (e.g. prod, staging, dev)
+
+  S3BucketName:
+    Type: String
+    Default: open-invite-storage
+    Description: Globally unique name for the private Amazon S3 invitation bucket
+
+  DBMasterUsername:
+    Type: String
+    Default: postgres
+    Description: Master username for Amazon RDS PostgreSQL
+
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+    Default: CloudComputing2026!
+    MinLength: 8
+    Description: Master password for Amazon RDS PostgreSQL (min 8 characters)
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    Description: "RDS database compute instance type (Free Tier eligible: db.t3.micro)"
+
+  DBAllocatedStorage:
+    Type: Number
+    Default: 20
+    Description: Allocated storage size in GB for RDS PostgreSQL
+
+  DBPubliclyAccessible:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Whether RDS PostgreSQL should be accessible from external IPs for initial verification and seeding
+
+  SenderEmailAddress:
+    Type: String
+    Default: invitations@example.com
+    Description: Verified sender email address in Amazon SES
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: The VPC where RDS PostgreSQL and the App Runner VPC Connector will reside (select default VPC)
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: At least two Subnet IDs in different Availability Zones within the VPC for RDS Subnet Group
+
+  EnableAppRunner:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Whether to deploy AWS App Runner compute service (set false if subscription is pending)
+
+Conditions:
+  DeployAppRunner: !Equals [!Ref EnableAppRunner, 'true']
+  IsDBPublic: !Equals [!Ref DBPubliclyAccessible, 'true']
+
+Resources:
+  # ============================================================================
+  # 1. STORAGE TIER: Amazon S3 Private Bucket for PDF Invitations
+  # ============================================================================
+  S3InvitationBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${S3BucketName}-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, HEAD]
+            AllowedOrigins: ['*']
+            MaxAge: 3600
+
+  # ============================================================================
+  # 2. SECURITY GROUPS: Restrictive Database Access
+  # ============================================================================
+  AppRunnerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for AWS App Runner VPC connector egress
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-apprunner-egress-sg"
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS PostgreSQL instance
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref AppRunnerSecurityGroup
+          Description: Allow PostgreSQL inbound from App Runner VPC connector
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0
+          Description: Allow PostgreSQL inbound for external seeding and verification
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-rds-postgres-sg"
+
+  # ============================================================================
+  # 3. DATABASE TIER: Amazon RDS PostgreSQL Relational Instance
+  # ============================================================================
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group across multiple AZs for RDS PostgreSQL
+      SubnetIds: !Ref SubnetIds
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-db-subnet-group"
+
+  PostgreSQLDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: event_db
+      Engine: postgres
+      EngineVersion: '15'
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Ref DBMasterPassword
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      BackupRetentionPeriod: 1
+      MultiAZ: false
+      PubliclyAccessible: !If [IsDBPublic, true, false]
+      AutoMinorVersionUpgrade: true
+      DeletionProtection: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-event-invitation-db"
+
+  # ============================================================================
+  # 4. IAM ROLES: Least-Privilege Execution for AWS App Runner
+  # ============================================================================
+  AppRunnerInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-apprunner-instance-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: tasks.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3AndSESAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt S3InvitationBucket.Arn
+                  - !Sub "${S3InvitationBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource: "*"
+
+  AppRunnerAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-apprunner-ecr-access-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: build.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
+
+  # ============================================================================
+  # 6. COMPUTE TIER: AWS App Runner VPC Connector & Service
+  # ============================================================================
+  AppRunnerVpcConnector:
+    Type: AWS::AppRunner::VpcConnector
+    Condition: DeployAppRunner
+    Properties:
+      VpcConnectorName: !Sub "${EnvironmentName}-vpc-connector"
+      Subnets: !Ref SubnetIds
+      SecurityGroups:
+        - !Ref AppRunnerSecurityGroup
+
+  AppRunnerService:
+    Type: AWS::AppRunner::Service
+    Condition: DeployAppRunner
+    DependsOn:
+      - PostgreSQLDatabase
+      - S3InvitationBucket
+    Properties:
+      ServiceName: !Sub "${EnvironmentName}-event-invitation-app"
+      InstanceConfiguration:
+        Cpu: '1024'     # 1 vCPU
+        Memory: '2048'  # 2 GB RAM
+        InstanceRoleArn: !GetAtt AppRunnerInstanceRole.Arn
+      NetworkConfiguration:
+        EgressConfiguration:
+          EgressType: VPC
+          VpcConnectorArn: !GetAtt AppRunnerVpcConnector.VpcConnectorArn
+      HealthCheckConfiguration:
+        Protocol: HTTP
+        Path: /health
+        Interval: 10
+        Timeout: 5
+        HealthyThreshold: 1
+        UnhealthyThreshold: 5
+      SourceConfiguration:
+        AuthenticationConfiguration:
+          AccessRoleArn: !GetAtt AppRunnerAccessRole.Arn
+        AutoDeploymentsEnabled: true
+        ImageRepository:
+          ImageIdentifier: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/event-invitation-system:latest"
+          ImageRepositoryType: ECR
+          ImageConfiguration:
+            Port: '5000'
+            RuntimeEnvironmentVariables:
+              - Name: FLASK_ENV
+                Value: production
+              - Name: DATABASE_URL
+                Value: !Sub "postgresql://${DBMasterUsername}:${DBMasterPassword}@${PostgreSQLDatabase.Endpoint.Address}:${PostgreSQLDatabase.Endpoint.Port}/event_db"
+              - Name: STORAGE_BACKEND
+                Value: s3
+              - Name: S3_BUCKET_NAME
+                Value: !Ref S3InvitationBucket
+              - Name: AWS_REGION
+                Value: !Ref AWS::Region
+              - Name: EMAIL_PROVIDER
+                Value: ses
+              - Name: MAIL_DEFAULT_SENDER
+                Value: !Ref SenderEmailAddress
+              - Name: AUTO_SEED
+                Value: "true"
+              - Name: SECRET_KEY
+                Value: !Sub "prod-key-${AWS::StackId}"
+
+Outputs:
+  AppRunnerServiceUrl:
+    Condition: DeployAppRunner
+    Description: Direct public HTTPS URL for the deployed web application
+    Value: !Sub "https://${AppRunnerService.ServiceUrl}"
+    Export:
+      Name: !Sub "${EnvironmentName}-AppRunnerServiceUrl"
+
+  RDSEndpoint:
+    Description: Amazon RDS PostgreSQL private endpoint
+    Value: !GetAtt PostgreSQLDatabase.Endpoint.Address
+
+  S3BucketName:
+    Description: Amazon S3 bucket name for PDF invitations
+    Value: !Ref S3InvitationBucket
+
+  ECRRepositoryUri:
+    Description: Amazon ECR repository URI for pushing Docker images
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/event-invitation-system"

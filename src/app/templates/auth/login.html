@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Organizer Sign In{% endblock %}
+
+{% block content %}
+<div class="form-card">
+  <div style="text-align: center; margin-bottom: 1.5rem;">
+    <h2 style="color: var(--color-royal-navy); font-size: 1.75rem; margin-bottom: 0.5rem;">Organizer Sign In</h2>
+    <p style="color: #64748B; font-size: 0.95rem;">Access your events, invitations, and guest RSVP tracking.</p>
+  </div>
+
+  <form method="POST" action="{{ url_for('auth.login', next=request.args.get('next')) }}">
+    <div class="form-group">
+      <label class="form-label" for="email">Email Address</label>
+      <input type="email" id="email" name="email" class="form-control" value="{{ email or '' }}" required autofocus placeholder="host@example.com">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="password">Password</label>
+      <input type="password" id="password" name="password" class="form-control" required placeholder="••••••••">
+    </div>
+
+    <div style="margin-top: 1.5rem;">
+      <button type="submit" class="btn btn-primary" style="width: 100%; padding: 0.75rem;">Sign In to Dashboard</button>
+    </div>
+  </form>
+
+  <div style="text-align: center; margin-top: 1.5rem; font-size: 0.9rem; color: #64748B;">
+    Don't have an organizer account? 
+    <a href="{{ url_for('auth.register') }}" style="color: var(--color-azure-blue); font-weight: 600;">Create one here</a>
+  </div>
+</div>
+{% endblock %}

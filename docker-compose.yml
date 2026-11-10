@@ -1,0 +1,64 @@
+services:
+  # OpenInvite Web Application Service
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: openinvite_app
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - SECRET_KEY=replace-with-a-random-secret-key-in-production
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/event_db
+      - STORAGE_BACKEND=local
+      - LOCAL_STORAGE_PATH=/app/uploads
+      - EMAIL_PROVIDER=smtp
+      - SMTP_HOST=mailpit
+      - SMTP_PORT=1025
+      - MAIL_DEFAULT_SENDER=invitations@open-invite.local
+      - AUTO_SEED=true
+    volumes:
+      - ./uploads:/app/uploads
+      - ./instance:/app/instance
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  # Optional PostgreSQL database service (remove or ignore if using SQLite or AWS RDS)
+  db:
+    image: postgres:15-alpine
+    container_name: openinvite_db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=event_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d event_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Optional local SMTP & webmail inbox viewer (http://localhost:8025)
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: openinvite_mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025"  # Mailpit Web UI (inspect all sent emails in browser)
+      - "1025:1025"  # SMTP port
+    environment:
+      - MP_MAX_MESSAGES=500
+      - MP_SMTP_AUTH_ACCEPT_ANY=1
+
+volumes:
+  postgres_data:

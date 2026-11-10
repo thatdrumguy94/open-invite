@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}Create New Event{% endblock %}
+
+{% block content %}
+<div class="form-card" style="max-width: 700px;">
+  <div style="margin-bottom: 1.5rem; border-bottom: 1px solid var(--color-border); padding-bottom: 1rem;">
+    <h2 style="color: var(--color-royal-navy); font-size: 1.75rem; margin-bottom: 0.25rem;">Create New Event</h2>
+    <p style="color: #64748B; font-size: 0.95rem;">Configure your event details and invitation document.</p>
+  </div>
+
+  <form method="POST" action="{{ url_for('events.create_event') }}" enctype="multipart/form-data">
+    <div class="form-group">
+      <label class="form-label" for="title">Event Title *</label>
+      <input type="text" id="title" name="title" class="form-control" value="{{ form.get('title', '') }}" required placeholder="e.g. Annual Community Celebration">
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+      <div class="form-group">
+        <label class="form-label" for="event_type">Event Type *</label>
+        <select id="event_type" name="event_type" class="form-control" required>
+          <option value="Birthday" {% if form.get('event_type') == 'Birthday' %}selected{% endif %}>Birthday Party</option>
+          <option value="Baby Shower" {% if form.get('event_type') == 'Baby Shower' %}selected{% endif %}>Baby Shower</option>
+          <option value="Bridal Shower" {% if form.get('event_type') == 'Bridal Shower' %}selected{% endif %}>Bridal Shower</option>
+          <option value="Banquet" {% if form.get('event_type') == 'Banquet' %}selected{% endif %}>Banquet / Dinner</option>
+          <option value="Graduation" {% if form.get('event_type') == 'Graduation' %}selected{% endif %}>Graduation Party</option>
+          <option value="Wedding" {% if form.get('event_type') == 'Wedding' %}selected{% endif %}>Wedding Reception</option>
+          <option value="Social Gathering" {% if form.get('event_type') == 'Social Gathering' %}selected{% endif %}>Social Gathering</option>
+          <option value="Other" {% if form.get('event_type') == 'Other' %}selected{% endif %}>Other</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="event_date">Date & Time *</label>
+        <input type="datetime-local" id="event_date" name="event_date" class="form-control" value="{{ form.get('event_date', '') }}" required>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="location">Venue / Location Address *</label>
+      <input type="text" id="location" name="location" class="form-control" value="{{ form.get('location', '') }}" required placeholder="e.g. 123 Celebration Ave, San Antonio, TX 78201">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="description">Event Description & Notes</label>
+      <textarea id="description" name="description" class="form-control" rows="3" placeholder="Optional details, dress code, parking instructions, or gift registry links...">{{ form.get('description', '') }}</textarea>
+    </div>
+
+    <!-- Invitation Document Selection -->
+    <div class="form-group" style="margin-top: 1.75rem;">
+      <label class="form-label">Invitation Document Options *</label>
+      <div class="radio-options">
+        <label class="radio-card" id="card-auto" onclick="selectMode('auto')">
+          <input type="radio" name="invitation_mode" value="auto" id="radio-auto" checked onchange="toggleUploadSection(this.value)">
+          <div style="font-weight: 700; color: var(--color-royal-navy); margin-top: 0.25rem;">✨ Auto-Generate with ReportLab</div>
+          <div style="font-size: 0.8rem; color: #64748B; margin-top: 0.25rem;">
+            Generates a high-resolution, vector PDF invitation styled in the Executive Cloud Palette.
+          </div>
+        </label>
+
+        <label class="radio-card" id="card-custom" onclick="selectMode('custom')">
+          <input type="radio" name="invitation_mode" value="custom" id="radio-custom" onchange="toggleUploadSection(this.value)">
+          <div style="font-weight: 700; color: var(--color-royal-navy); margin-top: 0.25rem;">📄 Upload Custom PDF</div>
+          <div style="font-size: 0.8rem; color: #64748B; margin-top: 0.25rem;">
+            Provide your own custom PDF document artwork (up to 10MB).
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <!-- Custom PDF File Input (Hidden unless Custom is selected) -->
+    <div class="form-group" id="custom-pdf-section" style="display: none; background-color: #F8FAFC; border: 1.5px dashed #CBD5E1; border-radius: 8px; padding: 1.25rem; margin-top: 1rem;">
+      <label class="form-label" for="custom_pdf">Select Custom Invitation PDF (Max 10MB)</label>
+      <input type="file" id="custom_pdf" name="custom_pdf" class="form-control" accept=".pdf,application/pdf">
+      <div class="form-help">Must be a valid PDF file starting with the %PDF- header.</div>
+    </div>
+
+    <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 2rem; border-top: 1px solid var(--color-border); padding-top: 1.25rem;">
+      <a href="{{ url_for('events.list_events') }}" class="btn btn-secondary">Cancel</a>
+      <button type="submit" class="btn btn-primary">Create Event & Generate Invitation</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function selectMode(mode) {
+    document.getElementById('radio-' + mode).checked = true;
+    toggleUploadSection(mode);
+  }
+
+  function toggleUploadSection(val) {
+    const uploadSection = document.getElementById('custom-pdf-section');
+    const customFileInput = document.getElementById('custom_pdf');
+    if (val === 'custom') {
+      uploadSection.style.display = 'block';
+      customFileInput.required = true;
+      document.getElementById('card-custom').style.borderColor = 'var(--color-azure-slate)';
+      document.getElementById('card-auto').style.borderColor = 'var(--color-border)';
+    } else {
+      uploadSection.style.display = 'none';
+      customFileInput.required = false;
+      document.getElementById('card-auto').style.borderColor = 'var(--color-azure-slate)';
+      document.getElementById('card-custom').style.borderColor = 'var(--color-border)';
+    }
+  }
+</script>
+{% endblock %}

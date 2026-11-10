@@ -1,0 +1,328 @@
+{% extends "base.html" %}
+
+{% block title %}{{ event.title }}{% endblock %}
+
+{% block content %}
+<!-- Event Header Card -->
+<div class="card" style="margin-bottom: 2rem;">
+  <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 1rem; border-bottom: 1px solid var(--color-border); padding-bottom: 1.25rem; margin-bottom: 1.25rem;">
+    <div>
+      <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+        <span class="badge">{{ event.event_type }}</span>
+        <span style="font-size: 0.85rem; color: #64748B;">
+          {% if event.is_custom_pdf %}📄 Custom PDF Document{% else %}✨ Auto-Generated with ReportLab{% endif %}
+        </span>
+      </div>
+      <h1 style="color: var(--color-royal-navy); font-size: 2.25rem; font-weight: 700; margin-bottom: 0.5rem;">
+        {{ event.title }}
+      </h1>
+      <div style="display: flex; flex-wrap: wrap; gap: 1.5rem; font-size: 0.95rem; color: #475569;">
+        <span>📅 <strong>{{ event.event_date.strftime('%A, %B %d, %Y at %I:%M %p') }}</strong></span>
+        <span>📍 <strong>{{ event.location }}</strong></span>
+      </div>
+      {% if event.description %}
+        <p style="margin-top: 0.75rem; color: #334155; font-size: 0.95rem; max-width: 800px; font-style: italic;">
+          &ldquo;{{ event.description }}&rdquo;
+        </p>
+      {% endif %}
+    </div>
+
+    <!-- Actions: Email Dispatch, Download PDF, Preview PDF, Regenerate, Delete -->
+    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
+      <!-- Email Dispatch Actions -->
+      <form method="POST" action="{{ url_for('communications.send_invitations', event_id=event.event_id) }}" style="display: inline;" onsubmit="return confirm('Send invitation emails to all {{ summary.total_invited }} guest(s)?');">
+        <button type="submit" class="btn btn-primary btn-sm" {% if summary.total_invited == 0 %}disabled style="opacity: 0.6;" title="Add guests before sending invitations"{% endif %}>
+          ✉️ Send Invitations ({{ summary.total_invited }})
+        </button>
+      </form>
+
+      <form method="POST" action="{{ url_for('communications.send_reminders', event_id=event.event_id) }}" style="display: inline;" onsubmit="return confirm('Send reminder emails to {{ summary.pending }} pending guest(s)?');">
+        <button type="submit" class="btn btn-secondary btn-sm" {% if summary.pending == 0 %}disabled style="opacity: 0.6;" title="No pending guests to remind"{% endif %}>
+          ⏰ Send Reminders ({{ summary.pending }} Pending)
+        </button>
+      </form>
+
+      {% if event.pdf_storage_path %}
+        <a href="{{ url_for('events.download_invitation', event_id=event.event_id, download=1) }}" class="btn btn-azure btn-sm">
+          📥 Download PDF
+        </a>
+        <button type="button" onclick="togglePdfPreview()" class="btn btn-secondary btn-sm" id="btn-toggle-pdf">
+          👁️ Preview PDF
+        </button>
+      {% endif %}
+
+      {% if not event.is_custom_pdf %}
+        <form method="POST" action="{{ url_for('events.regenerate_invitation_pdf', event_id=event.event_id) }}">
+          <button type="submit" class="btn btn-secondary btn-sm" title="Recompile ReportLab PDF with latest event details">
+            🔄 Regenerate PDF
+          </button>
+        </form>
+      {% endif %}
+
+      <form method="POST" action="{{ url_for('events.delete_event', event_id=event.event_id) }}" onsubmit="return confirm('Are you sure you want to permanently delete this event and all associated guest data?');">
+        <button type="submit" class="btn btn-danger btn-sm">Delete Event</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Inline PDF Preview Drawer (collapsible) -->
+  <div id="pdf-preview-drawer" style="display: none; background: #F8FAFC; border: 1.5px solid var(--color-border); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+      <span style="font-weight: 700; color: var(--color-royal-navy); font-size: 0.9rem;">
+        📄 Invitation PDF Viewer (ReportLab Output)
+      </span>
+      <div style="display: flex; gap: 0.5rem; align-items: center;">
+        <a href="{{ url_for('events.download_invitation', event_id=event.event_id) }}" target="_blank" class="btn btn-secondary btn-sm" style="font-size: 0.8rem; padding: 0.25rem 0.6rem;">
+          ↗ Open in New Tab
+        </a>
+        <button type="button" onclick="togglePdfPreview()" style="background: none; border: none; font-size: 1rem; cursor: pointer; color: #64748B;">
+          ✕ Close Preview
+        </button>
+      </div>
+    </div>
+    <iframe id="pdf-preview-frame" data-src="{{ url_for('events.download_invitation', event_id=event.event_id) }}" style="width: 100%; height: 500px; border: 1px solid #CBD5E1; border-radius: 6px; background: white;"></iframe>
+  </div>
+
+  <!-- RSVP Metrics Grid -->
+  <div class="metrics-grid">
+    <div class="stat-card">
+      <div class="stat-value">{{ summary.total_invited }}</div>
+      <div class="stat-label">Total Invited</div>
+    </div>
+    <div class="stat-card" style="border-color: #A7F3D0; background-color: #F0FDF4;">
+      <div class="stat-value" style="color: #065F46;">{{ summary.accepted }}</div>
+      <div class="stat-label" style="color: #047857;">Accepted</div>
+    </div>
+    <div class="stat-card" style="border-color: #FECACA; background-color: #FEF2F2;">
+      <div class="stat-value" style="color: #991B1B;">{{ summary.declined }}</div>
+      <div class="stat-label" style="color: #B91C1C;">Declined</div>
+    </div>
+    <div class="stat-card" style="border-color: #FDE68A; background-color: #FFFBEB;">
+      <div class="stat-value" style="color: #92400E;">{{ summary.pending }}</div>
+      <div class="stat-label" style="color: #B45309;">Pending</div>
+    </div>
+    <div class="stat-card" style="border-color: #BFDBFE; background-color: #EFF6FF;">
+      <div class="stat-value" style="color: var(--color-royal-navy);">{{ summary.total_attendees }}</div>
+      <div class="stat-label" style="color: var(--color-royal-navy);">Total Attendees (with +1s)</div>
+    </div>
+  </div>
+</div>
+
+<!-- Guest Management Hub -->
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; margin-bottom: 2rem;">
+  <!-- Left Column: Guest List Table -->
+  <div>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+      <h2 style="color: var(--color-royal-navy); font-size: 1.35rem; font-weight: 700;">
+        Guest Roster ({{ guests|length }})
+      </h2>
+    </div>
+
+    {% if guests %}
+      <div class="table-responsive">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Guest Name & Attendees</th>
+              <th>Email</th>
+              <th>Status</th>
+              <th style="text-align: center;">Allowed +1s</th>
+              <th style="text-align: center;">Attending +1s</th>
+              <th>RSVP Link</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for guest in guests %}
+              <tr>
+                <td>
+                  <strong>{{ guest.guest_name }}</strong>
+                  <!-- Display collected additional attendee details if any -->
+                  {% if guest.additional_attendees %}
+                    <div style="margin-top: 0.35rem; padding-left: 0.5rem; border-left: 2px solid var(--color-azure-slate);">
+                      <div style="font-size: 0.75rem; font-weight: 700; color: #64748B;">Additional Attendees:</div>
+                      {% for att in guest.additional_attendees %}
+                        <div style="font-size: 0.75rem; color: #1E293B;">
+                          &bull; <strong>{{ att.name }}</strong>
+                          {% if att.dietary_notes %}
+                            <span style="color: #0284C7;">({{ att.dietary_notes }})</span>
+                          {% endif %}
+                        </div>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+                  {% if guest.notes %}
+                    <div style="font-size: 0.75rem; color: #64748B; font-style: italic; margin-top: 0.25rem;">
+                      Note: &ldquo;{{ guest.notes }}&rdquo;
+                    </div>
+                  {% endif %}
+                </td>
+                <td style="color: #64748B;">{{ guest.guest_email }}</td>
+                <td>
+                  {% if guest.rsvp_status == 'Accepted' %}
+                    <span class="badge-status badge-accepted">Accepted</span>
+                  {% elif guest.rsvp_status == 'Declined' %}
+                    <span class="badge-status badge-declined">Declined</span>
+                  {% else %}
+                    <span class="badge-status badge-pending">Pending</span>
+                  {% endif %}
+                </td>
+                <td style="text-align: center; color: #64748B; font-weight: 600;">
+                  +{{ guest.allowed_additional_guests }}
+                </td>
+                <td style="text-align: center; font-weight: 700; {% if guest.plus_ones > 0 %}color: #065F46;{% endif %}">
+                  {{ guest.plus_ones }}
+                </td>
+                <td>
+                  <a href="/rsvp/{{ guest.rsvp_token }}" target="_blank" style="font-family: monospace; font-size: 0.8rem; color: var(--color-azure-blue); font-weight: 600;">
+                    /rsvp/{{ guest.rsvp_token[:8] }}...
+                  </a>
+                </td>
+                <td>
+                  <form method="POST" action="{{ url_for('guests.delete_guest', event_id=event.event_id, guest_id=guest.guest_id) }}" onsubmit="return confirm('Remove {{ guest.guest_name }} from guest list?');">
+                    <button type="submit" class="btn btn-sm btn-secondary" style="color: #EF4444;" title="Remove Guest">&times;</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="card" style="text-align: center; padding: 2.5rem 1rem;">
+        <p style="color: #64748B; margin-bottom: 1rem;">No guests have been added to this event yet.</p>
+        <p style="font-size: 0.85rem; color: #94A3B8;">Add guests using the forms on the right.</p>
+      </div>
+    {% endif %}
+
+    <!-- Communications History & Audit Log -->
+    <div class="card" style="margin-top: 1.5rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--color-border); padding-bottom: 0.75rem; margin-bottom: 1rem;">
+        <div>
+          <h3 style="color: var(--color-royal-navy); font-size: 1.15rem; margin: 0 0 0.25rem 0;">
+            📬 Communications History & Audit Log
+          </h3>
+          <p style="font-size: 0.8rem; color: #64748B; margin: 0;">
+            Log of all transactional emails dispatched via Amazon SES / SendGrid / SMTP.
+          </p>
+        </div>
+        <span class="badge" style="background-color: #EFF6FF; color: #1E3A8A; font-weight: 700;">
+          {{ event.communications|length }} Dispatched
+        </span>
+      </div>
+
+      {% if event.communications %}
+        <div class="table-responsive">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Subject</th>
+                <th style="text-align: center;">Recipients</th>
+                <th>Dispatched At</th>
+                <th>Log Summary</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for comm in event.communications %}
+                <tr>
+                  <td>
+                    {% if comm.message_type == 'Invitation' %}
+                      <span class="badge" style="background-color: #EFF6FF; color: #1E3A8A;">✉️ Invitation</span>
+                    {% elif comm.message_type == 'Reminder' %}
+                      <span class="badge" style="background-color: #FEF3C7; color: #92400E;">⏰ Reminder</span>
+                    {% else %}
+                      <span class="badge">{{ comm.message_type }}</span>
+                    {% endif %}
+                  </td>
+                  <td style="font-weight: 600; color: #1E293B;">{{ comm.subject }}</td>
+                  <td style="text-align: center;">
+                    <span class="badge" style="background-color: #F1F5F9; color: #334155; font-weight: 700;">
+                      {{ comm.recipients_count }}
+                    </span>
+                  </td>
+                  <td style="font-size: 0.85rem; color: #64748B; white-space: nowrap;">
+                    {{ comm.sent_at.strftime('%b %d, %Y at %I:%M %p') if comm.sent_at else '—' }}
+                  </td>
+                  <td style="font-size: 0.8rem; color: #475569; font-style: italic;">
+                    {{ comm.body }}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div style="text-align: center; padding: 2rem 1rem; color: #64748B; background-color: #F8FAFC; border-radius: 8px;">
+          <p style="margin: 0 0 0.5rem 0; font-size: 0.9rem;">No emails have been dispatched for this event yet.</p>
+          <p style="margin: 0; font-size: 0.8rem; color: #94A3B8;">Click <strong>✉️ Send Invitations</strong> above to email all guests with their personal RSVP link.</p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Right Column: Add Guest & CSV Upload Cards -->
+  <div>
+    <!-- Quick Add Guest Form -->
+    <div class="card" style="margin-bottom: 1.5rem;">
+      <h3 style="color: var(--color-royal-navy); font-size: 1.1rem; margin-bottom: 1rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem;">
+        + Add Single Guest
+      </h3>
+      <form method="POST" action="{{ url_for('guests.add_guest', event_id=event.event_id) }}">
+        <div class="form-group">
+          <label class="form-label" for="guest_name">Full Name *</label>
+          <input type="text" id="guest_name" name="guest_name" class="form-control" required placeholder="Alice Johnson">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="guest_email">Email Address *</label>
+          <input type="email" id="guest_email" name="guest_email" class="form-control" required placeholder="alice@example.com">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="allowed_additional_guests">Allowed Additional Guests (+1s)</label>
+          <input type="number" id="allowed_additional_guests" name="allowed_additional_guests" class="form-control" value="0" min="0" max="10">
+          <div class="form-help">Set how many additional attendees this invite is permitted to bring (0 for solo invite).</div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="width: 100%;">Add to Guest List</button>
+      </form>
+    </div>
+
+    <!-- Bulk CSV Import Form -->
+    <div class="card">
+      <h3 style="color: var(--color-royal-navy); font-size: 1.1rem; margin-bottom: 0.5rem;">
+        📁 Bulk CSV Import
+      </h3>
+      <p style="font-size: 0.8rem; color: #64748B; margin-bottom: 1rem;">
+        Upload a CSV file containing guest names, emails, and optional additional guest allowances.
+      </p>
+
+      <form method="POST" action="{{ url_for('guests.upload_csv', event_id=event.event_id) }}" enctype="multipart/form-data">
+        <div class="form-group">
+          <input type="file" id="csv_file" name="csv_file" class="form-control" accept=".csv,text/csv" required>
+          <div class="form-help">Columns: <code>Name, Email</code> (Optional 3rd col: <code>Additional Guests</code>).</div>
+        </div>
+        <button type="submit" class="btn btn-azure" style="width: 100%;">Upload & Import CSV</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function togglePdfPreview() {
+    const drawer = document.getElementById('pdf-preview-drawer');
+    const btn = document.getElementById('btn-toggle-pdf');
+    const iframe = document.getElementById('pdf-preview-frame');
+    if (drawer.style.display === 'none') {
+      if (iframe && (!iframe.src || iframe.src === 'about:blank')) {
+        iframe.src = iframe.getAttribute('data-src');
+      }
+      drawer.style.display = 'block';
+      if (btn) btn.textContent = '✕ Hide Preview';
+    } else {
+      drawer.style.display = 'none';
+      if (btn) btn.textContent = '👁️ Preview PDF';
+    }
+  }
+</script>
+{% endblock %}

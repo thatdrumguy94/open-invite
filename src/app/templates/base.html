@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}OpenInvite{% endblock %} | Event Invitation &amp; RSVP Platform</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <!-- Executive Cloud 3-Stop Gradient Top Line -->
+  <div class="top-banner"></div>
+
+  <!-- Main Navigation -->
+  <header>
+    <nav class="navbar">
+      <a href="{{ url_for('main.index') }}" class="nav-brand">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+          <polyline points="22,6 12,13 2,6"/>
+        </svg>
+        <span>OpenInvite</span>
+      </a>
+
+      <div class="nav-links">
+        <a href="{{ url_for('main.index') }}">Home</a>
+        {% if current_user %}
+          <a href="{{ url_for('events.list_events') }}" class="font-bold">My Events</a>
+          <a href="{{ url_for('events.create_event') }}" class="btn btn-primary" style="padding: 0.4rem 0.9rem; font-size: 0.85rem;">+ New Event</a>
+          <span style="color: #64748B; font-size: 0.85rem;">👤 {{ current_user.name }}</span>
+          <a href="{{ url_for('auth.logout') }}" style="color: #EF4444;">Log Out</a>
+        {% else %}
+          <a href="{{ url_for('auth.login') }}">Log In</a>
+          <a href="{{ url_for('auth.register') }}" class="btn btn-primary" style="padding: 0.4rem 0.9rem; font-size: 0.85rem;">Host Register</a>
+        {% endif %}
+        <a href="{{ url_for('health.health_check') }}" target="_blank" style="color: #64748B; font-size: 0.85rem;">Health API</a>
+      </div>
+    </nav>
+  </header>
+
+  <!-- Content Container -->
+  <main class="container">
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div style="margin-bottom: 1.5rem;">
+          {% for category, message in messages %}
+            <div class="alert alert-{{ category }}">
+              {{ message }}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <p>OpenInvite &bull; Self-Hosted Event Invitation &amp; RSVP Platform &bull; Open Source</p>
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}My Events Dashboard{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+  <div>
+    <h1 style="color: var(--color-royal-navy); font-size: 2rem; font-weight: 700; margin-bottom: 0.25rem;">My Events</h1>
+    <p style="color: #64748B;">Organize events, generate PDF invitations, and track RSVPs in real time.</p>
+  </div>
+  <a href="{{ url_for('events.create_event') }}" class="btn btn-primary" style="padding: 0.75rem 1.25rem;">+ Create New Event</a>
+</div>
+
+{% if events %}
+  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1.5rem;">
+    {% for event in events %}
+      <div class="card" style="display: flex; flex-direction: column; justify-content: space-between;">
+        <div>
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
+            <span class="badge">{{ event.event_type }}</span>
+            <span style="font-size: 0.8rem; color: #64748B;">
+              {% if event.is_custom_pdf %}📄 Custom PDF{% else %}✨ Auto-Generated{% endif %}
+            </span>
+          </div>
+
+          <h3 style="color: var(--color-royal-navy); font-size: 1.3rem; margin-bottom: 0.5rem;">
+            <a href="{{ url_for('events.view_event', event_id=event.event_id) }}" style="text-decoration: none; color: inherit;">
+              {{ event.title }}
+            </a>
+          </h3>
+
+          <div style="font-size: 0.875rem; color: #475569; margin-bottom: 0.4rem;">
+            📅 {{ event.event_date.strftime('%A, %b %d, %Y at %I:%M %p') }}
+          </div>
+          <div style="font-size: 0.875rem; color: #475569; margin-bottom: 1.25rem;">
+            📍 {{ event.location }}
+          </div>
+
+          <!-- RSVP Stats Mini-Bar -->
+          {% set summary = event.rsvp_summary %}
+          <div style="background-color: #F8FAFC; border: 1px solid var(--color-border); border-radius: 8px; padding: 0.75rem; margin-bottom: 1.25rem;">
+            <div style="font-size: 0.75rem; text-transform: uppercase; color: #64748B; font-weight: 600; margin-bottom: 0.35rem;">RSVP Summary</div>
+            <div style="display: flex; justify-content: space-between; font-size: 0.85rem;">
+              <span><strong>{{ summary.total_invited }}</strong> Invited</span>
+              <span style="color: #065F46;"><strong>{{ summary.accepted }}</strong> Accepted</span>
+              <span style="color: #92400E;"><strong>{{ summary.pending }}</strong> Pending</span>
+              <span style="color: #991B1B;"><strong>{{ summary.declined }}</strong> Declined</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--color-border); padding-top: 1rem; margin-top: auto;">
+          <a href="{{ url_for('events.view_event', event_id=event.event_id) }}" class="btn btn-azure btn-sm">Manage Event &bull; Guest List &rarr;</a>
+          {% if event.pdf_storage_path %}
+            <a href="{{ url_for('events.download_invitation', event_id=event.event_id) }}" target="_blank" class="btn btn-secondary btn-sm" title="Download Invitation PDF">PDF</a>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="card" style="text-align: center; padding: 4rem 2rem;">
+    <div style="font-size: 3rem; margin-bottom: 1rem;">💌</div>
+    <h3 style="color: var(--color-royal-navy); font-size: 1.5rem; margin-bottom: 0.5rem;">No Events Created Yet</h3>
+    <p style="color: #64748B; max-width: 500px; margin: 0 auto 1.5rem auto;">
+      Get started by setting up your first event. Choose between an automatically styled PDF invitation or uploading your own custom artwork.
+    </p>
+    <a href="{{ url_for('events.create_event') }}" class="btn btn-primary">+ Create Your First Event</a>
+  </div>
+{% endif %}
+{% endblock %}
