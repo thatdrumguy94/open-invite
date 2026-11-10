@@ -46,7 +46,7 @@ jobs:
         env:
           FLASK_ENV: testing
           SECRET_KEY: test-key-ci-environment-run
-          DATABASE_URL: sqlite:///:memory:
+          DATABASE_URL: "sqlite:///:memory:"
           STORAGE_BACKEND: local
           LOCAL_STORAGE_PATH: ./uploads
           EMAIL_PROVIDER: console
