@@ -43,15 +43,19 @@ resource "aws_apprunner_service" "app" {
         port = "5000"
 
         runtime_environment_variables = {
-          FLASK_ENV           = "production"
-          DATABASE_URL        = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.endpoint}/event_db"
-          STORAGE_BACKEND     = "s3"
-          S3_BUCKET_NAME      = aws_s3_bucket.invitations.id
-          AWS_REGION          = var.aws_region
-          EMAIL_PROVIDER      = "ses"
-          MAIL_DEFAULT_SENDER = var.sender_email
-          AUTO_SEED           = "true"
-          SECRET_KEY          = random_password.secret_key.result
+          FLASK_ENV            = "production"
+          FORCE_HTTPS          = "true"
+          SESSION_COOKIE_SECURE = "true"
+          PREFERRED_URL_SCHEME = "https"
+          TRUST_PROXY_HEADERS  = "true"
+          DATABASE_URL         = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.endpoint}/event_db"
+          STORAGE_BACKEND      = "s3"
+          S3_BUCKET_NAME       = aws_s3_bucket.invitations.id
+          AWS_REGION           = var.aws_region
+          EMAIL_PROVIDER       = "ses"
+          MAIL_DEFAULT_SENDER  = var.sender_email
+          AUTO_SEED            = "true"
+          SECRET_KEY           = random_password.secret_key.result
         }
       }
     }

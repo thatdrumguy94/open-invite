@@ -46,3 +46,21 @@ variable "sender_email" {
   type        = string
   default     = "invitations@example.com"
 }
+
+variable "enable_ecs_fargate" {
+  description = "Deploy Amazon ECS Fargate behind an HTTPS Application Load Balancer (with ACM or CloudFront)"
+  type        = bool
+  default     = false
+}
+
+variable "acm_certificate_arn" {
+  description = "Optional ACM Certificate ARN for ALB HTTPS:443 listener. When empty and enable_cloudfront_https is true, CloudFront terminates HTTPS."
+  type        = string
+  default     = ""
+}
+
+variable "enable_cloudfront_https" {
+  description = "Provision an Amazon CloudFront HTTPS distribution in front of the ECS ALB when acm_certificate_arn is omitted"
+  type        = bool
+  default     = true
+}

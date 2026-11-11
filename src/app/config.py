@@ -9,9 +9,60 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 
+def _parse_bool(value: str | None, default: bool = False) -> bool:
+    """Parse boolean environment variables safely."""
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _parse_int(value: str | None, default: int = 1) -> int:
+    """Parse non-negative integer environment variables safely."""
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
 class Config:
     """Base configuration shared across environments."""
     SECRET_KEY = os.environ.get("SECRET_KEY", "insecure-dev-secret-key-change-me")
+
+    # HTTPS, Reverse Proxy & Cookie Security Settings
+    FORCE_HTTPS = _parse_bool(os.environ.get("FORCE_HTTPS"), False)
+    PREFERRED_URL_SCHEME = os.environ.get(
+        "PREFERRED_URL_SCHEME", "https" if FORCE_HTTPS else "http"
+    )
+    HTTPS_EXEMPT_PATHS = ("/health",)
+
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+    SESSION_COOKIE_SECURE = _parse_bool(
+        os.environ.get("SESSION_COOKIE_SECURE"), FORCE_HTTPS
+    )
+    REMEMBER_COOKIE_HTTPONLY = True
+    REMEMBER_COOKIE_SECURE = SESSION_COOKIE_SECURE
+
+    ENABLE_SECURITY_HEADERS = _parse_bool(
+        os.environ.get("ENABLE_SECURITY_HEADERS"), True
+    )
+    HSTS_ENABLED = _parse_bool(os.environ.get("HSTS_ENABLED"), True)
+    HSTS_MAX_AGE = _parse_int(os.environ.get("HSTS_MAX_AGE"), 31536000)
+    HSTS_INCLUDE_SUBDOMAINS = _parse_bool(
+        os.environ.get("HSTS_INCLUDE_SUBDOMAINS"), True
+    )
+    HSTS_PRELOAD = _parse_bool(os.environ.get("HSTS_PRELOAD"), False)
+
+    TRUST_PROXY_HEADERS = _parse_bool(os.environ.get("TRUST_PROXY_HEADERS"), True)
+    PROXY_FIX_X_FOR = _parse_int(os.environ.get("PROXY_FIX_X_FOR"), 1)
+    PROXY_FIX_X_PROTO = _parse_int(os.environ.get("PROXY_FIX_X_PROTO"), 1)
+    PROXY_FIX_X_HOST = _parse_int(os.environ.get("PROXY_FIX_X_HOST"), 1)
+    PROXY_FIX_X_PORT = _parse_int(os.environ.get("PROXY_FIX_X_PORT"), 1)
+    PROXY_FIX_X_PREFIX = _parse_int(os.environ.get("PROXY_FIX_X_PREFIX"), 1)
+
+    TLS_ENABLED = _parse_bool(os.environ.get("TLS_ENABLED"), False)
+    SSL_CERTFILE = os.environ.get("SSL_CERTFILE")
+    SSL_KEYFILE = os.environ.get("SSL_KEYFILE")
     
     # Database Settings
     SQLALCHEMY_DATABASE_URI = os.environ.get(
@@ -69,6 +120,11 @@ class TestingConfig(Config):
     LOCAL_STORAGE_PATH = Path("/tmp/event_test_uploads")
     EMAIL_PROVIDER = "console"
     WTF_CSRF_ENABLED = False
+    FORCE_HTTPS = False
+    PREFERRED_URL_SCHEME = "http"
+    SESSION_COOKIE_SECURE = False
+    REMEMBER_COOKIE_SECURE = False
+    TRUST_PROXY_HEADERS = True
 
 
 class ProductionConfig(Config):
@@ -77,6 +133,14 @@ class ProductionConfig(Config):
     TESTING = False
     # Ensure strong secret key in production
     SECRET_KEY = os.environ.get("SECRET_KEY")
+    FORCE_HTTPS = _parse_bool(os.environ.get("FORCE_HTTPS"), True)
+    PREFERRED_URL_SCHEME = os.environ.get(
+        "PREFERRED_URL_SCHEME", "https" if FORCE_HTTPS else "http"
+    )
+    SESSION_COOKIE_SECURE = _parse_bool(
+        os.environ.get("SESSION_COOKIE_SECURE"), FORCE_HTTPS
+    )
+    REMEMBER_COOKIE_SECURE = SESSION_COOKIE_SECURE
 
 
 config_by_name = {

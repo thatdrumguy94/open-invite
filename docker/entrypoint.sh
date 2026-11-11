@@ -52,5 +52,26 @@ if [[ "${AUTO_SEED}" == "true" || "${AUTO_SEED}" == "1" ]]; then
   python -m flask --app src/wsgi:app seed-db || echo "Warning: seed-db returned non-zero (data may already exist)."
 fi
 
+# Optional direct TLS support for standalone container deployments without a reverse proxy
+TLS_LOWER=$(echo "${TLS_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')
+CERT_FILE=""
+KEY_FILE=""
+
+if [[ -n "${SSL_CERTFILE:-}" && -n "${SSL_KEYFILE:-}" ]]; then
+  CERT_FILE="${SSL_CERTFILE}"
+  KEY_FILE="${SSL_KEYFILE}"
+elif [[ "${TLS_LOWER}" == "true" || "${TLS_LOWER}" == "1" || "${TLS_LOWER}" == "yes" || "${TLS_LOWER}" == "on" ]]; then
+  CERT_DIR="${TLS_CERT_DIR:-/tmp/openinvite-certs}"
+  echo "TLS_ENABLED=true: Ensuring self-signed TLS certificate in ${CERT_DIR}..."
+  python -c "from pathlib import Path; from src.app.tls import ensure_self_signed_cert; ensure_self_signed_cert(Path('${CERT_DIR}'), common_name='${TLS_DOMAIN:-localhost}')"
+  CERT_FILE="${CERT_DIR}/server.crt"
+  KEY_FILE="${CERT_DIR}/server.key"
+fi
+
 # Execute the main command passed to the container
+if [[ -n "${CERT_FILE}" && -n "${KEY_FILE}" && "$1" == "gunicorn" ]]; then
+  shift
+  exec gunicorn --certfile="${CERT_FILE}" --keyfile="${KEY_FILE}" "$@"
+fi
+
 exec "$@"

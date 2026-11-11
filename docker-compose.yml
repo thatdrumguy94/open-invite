@@ -1,4 +1,23 @@
 services:
+  # HTTPS Reverse Proxy (TLS termination + HTTP->HTTPS redirect)
+  proxy:
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+    container_name: openinvite_proxy
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      - TLS_DOMAIN=${TLS_DOMAIN:-localhost}
+      - TLS_IP=${TLS_IP:-}
+    volumes:
+      - nginx_certs:/etc/nginx/certs
+    depends_on:
+      web:
+        condition: service_healthy
+
   # OpenInvite Web Application Service
   web:
     build:
@@ -6,8 +25,8 @@ services:
       dockerfile: docker/Dockerfile
     container_name: openinvite_app
     restart: unless-stopped
-    ports:
-      - "5000:5000"
+    expose:
+      - "5000"
     environment:
       - FLASK_ENV=development
       - FLASK_DEBUG=1
@@ -20,6 +39,10 @@ services:
       - SMTP_PORT=1025
       - MAIL_DEFAULT_SENDER=invitations@open-invite.local
       - AUTO_SEED=true
+      - FORCE_HTTPS=${FORCE_HTTPS:-true}
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-true}
+      - PREFERRED_URL_SCHEME=https
+      - TRUST_PROXY_HEADERS=true
     volumes:
       - ./uploads:/app/uploads
       - ./instance:/app/instance
@@ -62,3 +85,4 @@ services:
 
 volumes:
   postgres_data:
+  nginx_certs:

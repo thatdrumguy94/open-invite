@@ -3,7 +3,7 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-45%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-57%20passed-brightgreen.svg)]()
 
 **OpenInvite** is a modern, lightweight, self-hosted event invitation and RSVP platform. It gives event organizers an independent, privacy-first alternative to ad-laden corporate event websites.
 
@@ -27,7 +27,7 @@ Run it in seconds as a zero-dependency standalone Docker container using local s
 
 ## 30-Second Quickstart (Standalone Docker)
 
-Run OpenInvite immediately with persistent local storage:
+Run OpenInvite immediately with persistent local storage and auto-generated HTTPS (self-signed TLS certificate):
 
 ```bash
 docker run -d \
@@ -36,30 +36,33 @@ docker run -d \
   -v openinvite_data:/app/instance \
   -v openinvite_uploads:/app/uploads \
   -e SECRET_KEY="replace-with-a-secure-random-string" \
+  -e TLS_ENABLED="true" \
   -e AUTO_SEED="true" \
   open-invite:latest
 ```
 
-Open your browser to [http://localhost:5000](http://localhost:5000).
+Open your browser to [https://localhost:5000](https://localhost:5000) (accept the self-signed certificate warning for local testing, or mount your own cert/key via `SSL_CERTFILE` and `SSL_KEYFILE`).
 
 > When `AUTO_SEED="true"` is set, the application pre-seeds a demo host account (`host@example.com` / `OpenInvite2026!`) and a sample celebration event to explore immediately.
+> Running behind an external TLS proxy instead? Omit `TLS_ENABLED="true"` (or set `FORCE_HTTPS="false"` and `SESSION_COOKIE_SECURE="false"` if testing over plain HTTP).
 
 ---
 
-## Docker Compose Quickstart
+## Docker Compose Quickstart (HTTPS Reverse Proxy)
 
-For local development or home-server deployment with a dedicated PostgreSQL database and a local webmail inspector:
+For local development or home-server deployment with an **Nginx HTTPS reverse proxy** (auto-generated self-signed TLS certificate + HTTP-to-HTTPS redirect), a dedicated PostgreSQL database, and a local webmail inspector:
 
 ```bash
 # Clone the repository
 git clone https://github.com/your-username/open-invite.git
 cd open-invite
 
-# Start the full stack (App + PostgreSQL + Mailpit)
+# Start the full stack (Nginx HTTPS Proxy + App + PostgreSQL + Mailpit)
 docker compose up -d
 ```
 
-- **OpenInvite Web App**: [http://localhost:5000](http://localhost:5000)
+- **OpenInvite Web App (HTTPS)**: [https://localhost](https://localhost) (requests to `http://localhost` automatically redirect `301` to HTTPS)
+- **Custom Certificates (Optional)**: Mount your CA-signed `server.crt` and `server.key` into `/etc/nginx/certs` on the `proxy` service, or set `TLS_DOMAIN=your-domain.com`.
 - **Mailpit Webmail Inspector**: [http://localhost:8025](http://localhost:8025) (preview all outgoing invitations locally)
 
 To shut down:
@@ -77,6 +80,14 @@ OpenInvite is configured entirely via environment variables:
 | :--- | :--- | :--- |
 | `SECRET_KEY` | `dev-secret-...` | Flask session encryption key. **Set a secure secret in production.** |
 | `FLASK_ENV` | `production` | Set to `production` or `development`. |
+| `FORCE_HTTPS` | `true` (prod) / `false` (dev) | Redirect plain HTTP traffic (except `/health`) to HTTPS. |
+| `SESSION_COOKIE_SECURE` | Matches `FORCE_HTTPS` | Mark session cookies as `Secure` (HTTPS-only). |
+| `PREFERRED_URL_SCHEME` | `https` (prod) / `http` (dev) | Default URL scheme for external `url_for()` links (e.g. invitation emails). |
+| `TRUST_PROXY_HEADERS` | `true` | Enable Werkzeug `ProxyFix` for `X-Forwarded-*` and `CloudFront-Forwarded-Proto` headers. |
+| `HSTS_ENABLED` | `true` | Emit `Strict-Transport-Security` header on HTTPS responses (`max-age=31536000; includeSubDomains`). |
+| `TLS_ENABLED` | `false` | Auto-generate a self-signed certificate for direct Gunicorn/Flask HTTPS without Nginx. |
+| `SSL_CERTFILE` / `SSL_KEYFILE` | *(empty)* | Paths to custom TLS certificate and private key for direct Gunicorn/Flask HTTPS. |
+| `TLS_DOMAIN` | `localhost` | Common Name / SAN domain used when auto-generating self-signed certificates. |
 | `DATABASE_URL` | *(empty / SQLite)* | PostgreSQL connection URI (`postgresql://user:pass@host:5432/dbname`). If left empty, SQLite is used automatically in `/app/instance/open_invite.db`. |
 | `STORAGE_BACKEND` | `local` | Document storage engine: `local` (filesystem) or `s3` (Amazon S3). |
 | `LOCAL_STORAGE_PATH` | `/app/uploads` | Filesystem path for uploaded and generated PDFs when in `local` mode. |
