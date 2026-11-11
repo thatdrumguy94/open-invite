@@ -386,6 +386,9 @@ def cmd_deploy_cf(args):
         {"ParameterKey": "SenderEmailAddress", "ParameterValue": args.sender_email or "invitations@example.com"},
         {"ParameterKey": "DBPubliclyAccessible", "ParameterValue": "true" if getattr(args, "db_public", True) else "false"},
         {"ParameterKey": "EnableAppRunner", "ParameterValue": "true" if getattr(args, "enable_apprunner", False) else "false"},
+        {"ParameterKey": "EnableEcsFargate", "ParameterValue": "true" if getattr(args, "enable_ecs", False) else "false"},
+        {"ParameterKey": "AcmCertificateArn", "ParameterValue": getattr(args, "acm_cert_arn", None) or ""},
+        {"ParameterKey": "EnableCloudFrontHttps", "ParameterValue": "false" if getattr(args, "disable_cloudfront", False) else "true"},
     ]
 
     capabilities = ["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"]
@@ -553,20 +556,125 @@ def cmd_status(args):
     except Exception as e:
         print(f"App Runner:  Check error ({e})")
 
-    # 7. Amazon ECS Fargate
+    # 7. Amazon ECS Fargate & Managed HTTPS Edges (ALB / CloudFront)
+    https_endpoints = discover_https_endpoints(session, include_apprunner=False)
+    for ep in https_endpoints:
+        print(f"{ep['provider']}: [{ep['status']}] URL: {ep['url']}")
+
     ecs = session.client("ecs")
     try:
         ip = get_fargate_public_ip(session)
         if ip:
-            print(f"ECS Fargate: [RUNNING] Public URL: http://{ip}:5000")
+            print(f"ECS Fargate: [RUNNING] Task IP: {ip} (Direct HTTP: http://{ip}:5000)")
         else:
-            services = ecs.describe_services(cluster="event-invitation-cluster", services=["event-invitation-service"]).get("services", [])
-            if services and services[0].get("desiredCount", 0) == 0:
-                print("ECS Fargate: [STOPPED] Service is scaled to 0 (run 'python infra/aws_manager.py public-on' to start).")
+            prod_services = ecs.describe_services(
+                cluster="prod-event-invitation-cluster",
+                services=["prod-event-invitation-service"],
+            ).get("services", [])
+            if isinstance(prod_services, list) and prod_services and prod_services[0].get("runningCount", 0) > 0:
+                svc = prod_services[0]
+                print(
+                    f"ECS Fargate: [{svc.get('status', 'ACTIVE')}] {svc.get('serviceName')} "
+                    f"(Running: {svc.get('runningCount')}/{svc.get('desiredCount')})"
+                )
             else:
-                print("ECS Fargate: [PENDING / STARTING] Container task starting...")
+                services = ecs.describe_services(cluster="event-invitation-cluster", services=["event-invitation-service"]).get("services", [])
+                if isinstance(services, list) and services and services[0].get("desiredCount", 0) == 0:
+                    print("ECS Fargate: [STOPPED] Service is scaled to 0 (run 'python infra/aws_manager.py public-on' to start).")
+                else:
+                    print("ECS Fargate: [PENDING / STARTING] Container task starting...")
     except Exception as e:
         print(f"ECS Fargate: Check error ({e})")
+
+
+def discover_https_endpoints(session, include_apprunner: bool = True) -> list[dict]:
+    """Discover active HTTPS endpoints across App Runner, CloudFront, and ALB."""
+    endpoints: list[dict] = []
+
+    # 1. App Runner
+    if include_apprunner:
+        try:
+            apprunner = session.client("apprunner")
+            services = apprunner.list_services().get("ServiceSummaryList", [])
+            if isinstance(services, list):
+                for s in services:
+                    name = s.get("ServiceName", "").lower()
+                    if "event" in name or "openinvite" in name:
+                        svc_url = s.get("ServiceUrl")
+                        if svc_url:
+                            endpoints.append(
+                                {
+                                    "provider": "App Runner",
+                                    "url": f"https://{svc_url}",
+                                    "status": s.get("Status", "UNKNOWN"),
+                                }
+                            )
+        except Exception:
+            pass
+
+    # 2. CloudFront HTTPS distributions
+    try:
+        cf_client = session.client("cloudfront")
+        dist_list = cf_client.list_distributions().get("DistributionList", {})
+        items = dist_list.get("Items", []) if isinstance(dist_list, dict) else []
+        if isinstance(items, list):
+            for dist in items:
+                comment = (dist.get("Comment") or "").lower()
+                origins = dist.get("Origins", {}).get("Items", [])
+                origin_match = any(
+                    "openinvite" in (o.get("DomainName") or "").lower()
+                    or "event" in (o.get("DomainName") or "").lower()
+                    for o in (origins if isinstance(origins, list) else [])
+                )
+                if "openinvite" in comment or "event" in comment or origin_match:
+                    domain = dist.get("DomainName")
+                    if domain:
+                        endpoints.append(
+                            {
+                                "provider": "CloudFront HTTPS",
+                                "url": f"https://{domain}",
+                                "status": dist.get("Status", "Deployed"),
+                            }
+                        )
+    except Exception:
+        pass
+
+    # 3. Application Load Balancer (HTTPS:443 listeners)
+    try:
+        elbv2 = session.client("elbv2")
+        lbs = elbv2.describe_load_balancers().get("LoadBalancers", [])
+        if isinstance(lbs, list):
+            for lb in lbs:
+                lb_name = (lb.get("LoadBalancerName") or "").lower()
+                if "openinvite" in lb_name or "event" in lb_name:
+                    listeners = elbv2.describe_listeners(
+                        LoadBalancerArn=lb.get("LoadBalancerArn", "")
+                    ).get("Listeners", [])
+                    has_https = isinstance(listeners, list) and any(
+                        l.get("Protocol") == "HTTPS" for l in listeners
+                    )
+                    if has_https and lb.get("DNSName"):
+                        endpoints.append(
+                            {
+                                "provider": "ALB HTTPS",
+                                "url": f"https://{lb['DNSName']}",
+                                "status": lb.get("State", {}).get("Code", "active"),
+                            }
+                        )
+    except Exception:
+        pass
+
+    return endpoints
+
+
+def _print_endpoint_urls(base_url: str) -> None:
+    """Print standard application endpoints for a discovered base URL."""
+    print(f"Web Base URL:  {base_url}")
+    print(f"Host Login:    {base_url}/auth/login")
+    print(f"Dashboard:     {base_url}/events/1")
+    print(f"Health Probe:  {base_url}/health")
+    print(f"Guest RSVP:    {base_url}/rsvp/770b7b9e-2f66-4867-89b6-673b2fbe48a1")
+    print(f"PDF Download:  {base_url}/events/1/pdf?download=1")
 
 
 def get_fargate_public_ip(session, cluster_name: str = "event-invitation-cluster", service_name: str = "event-invitation-service"):
@@ -604,16 +712,21 @@ def cmd_public_url(args):
     print("AWS Public Endpoint Discovery")
     print("=" * 60)
 
+    https_endpoints = discover_https_endpoints(session)
+    if https_endpoints:
+        primary = https_endpoints[0]
+        print(f"Status:        [ONLINE - {primary['provider']}]")
+        _print_endpoint_urls(primary["url"])
+        return
+
     ip = get_fargate_public_ip(session)
     if ip:
-        print(f"Status:        [ONLINE]")
+        scheme = "https" if getattr(args, "https", False) else "http"
+        print("Status:        [ONLINE - Direct Task IP]")
+        if scheme == "http":
+            print("Note:          Direct Fargate IP is HTTP-only. Deploy behind ALB/CloudFront or App Runner for HTTPS.")
         print(f"Public IP:     {ip}")
-        print(f"Web Base URL:  http://{ip}:5000")
-        print(f"Host Login:    http://{ip}:5000/auth/login")
-        print(f"Dashboard:     http://{ip}:5000/events/1")
-        print(f"Health Probe:  http://{ip}:5000/health")
-        print(f"Guest RSVP:    http://{ip}:5000/rsvp/770b7b9e-2f66-4867-89b6-673b2fbe48a1")
-        print(f"PDF Download:  http://{ip}:5000/events/1/pdf?download=1")
+        _print_endpoint_urls(f"{scheme}://{ip}:5000")
     else:
         print("Status:        [OFFLINE / NOT RUNNING]")
         print("The AWS Fargate container is currently stopped.")
@@ -644,13 +757,14 @@ def cmd_public_on(args):
         ip = get_fargate_public_ip(session, cluster_name=cluster_name, service_name=service_name)
         if ip:
             print(f"\n[+] AWS Fargate container is ONLINE!")
-            print(f"Public IP:     {ip}")
-            print(f"Web Base URL:  http://{ip}:5000")
-            print(f"Host Login:    http://{ip}:5000/auth/login")
-            print(f"Dashboard:     http://{ip}:5000/events/1")
-            print(f"Health Probe:  http://{ip}:5000/health")
-            print(f"Guest RSVP:    http://{ip}:5000/rsvp/770b7b9e-2f66-4867-89b6-673b2fbe48a1")
-            print(f"PDF Download:  http://{ip}:5000/events/1/pdf?download=1")
+            https_endpoints = discover_https_endpoints(session)
+            if https_endpoints:
+                primary = https_endpoints[0]
+                print(f"HTTPS Edge:    {primary['provider']}")
+                _print_endpoint_urls(primary["url"])
+            else:
+                print(f"Public IP:     {ip}")
+                _print_endpoint_urls(f"http://{ip}:5000")
             return True
         print(".", end="", flush=True)
 
@@ -837,6 +951,9 @@ def main():
     cf_parser.add_argument("--db-pass", default="AdminPassword2026!", help="RDS master password")
     cf_parser.add_argument("--sender-email", default="invitations@example.com", help="SES verified sender email")
     cf_parser.add_argument("--enable-apprunner", action="store_true", default=False, help="Enable App Runner compute deployment")
+    cf_parser.add_argument("--enable-ecs", action="store_true", default=False, help="Enable ECS Fargate + ALB HTTPS deployment")
+    cf_parser.add_argument("--acm-cert-arn", default="", help="Optional ACM Certificate ARN for ALB HTTPS:443 listener")
+    cf_parser.add_argument("--disable-cloudfront", action="store_true", default=False, help="Disable CloudFront HTTPS distribution for ECS ALB")
 
     # status-cf
     status_cf_parser = subparsers.add_parser("status-cf", help="View CloudFormation stack status and outputs")

@@ -14,6 +14,14 @@ run:
   env:
     - name: FLASK_ENV
       value: production
+    - name: FORCE_HTTPS
+      value: "true"
+    - name: SESSION_COOKIE_SECURE
+      value: "true"
+    - name: PREFERRED_URL_SCHEME
+      value: "https"
+    - name: TRUST_PROXY_HEADERS
+      value: "true"
     - name: STORAGE_BACKEND
       value: s3
     - name: AWS_REGION

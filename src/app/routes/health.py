@@ -1,6 +1,6 @@
 import sys
 from datetime import datetime, timezone
-from flask import Blueprint, jsonify, current_app
+from flask import Blueprint, jsonify, current_app, request
 from sqlalchemy import text
 from src.app import db
 
@@ -29,6 +29,8 @@ def health_check():
                 "python_version": sys.version.split()[0],
                 "storage_backend": current_app.config.get("STORAGE_BACKEND"),
                 "email_provider": current_app.config.get("EMAIL_PROVIDER"),
+                "https_enforced": bool(current_app.config.get("FORCE_HTTPS", False)),
+                "scheme": request.scheme,
                 "database": db_status,
             }
         ),

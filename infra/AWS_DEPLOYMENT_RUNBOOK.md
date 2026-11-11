@@ -38,7 +38,7 @@ OpenInvite can be packaged and deployed as a containerized, cloud-native web ser
 ```
 
 ### AWS Services Utilized
-1. **AWS App Runner**: Fully managed compute service running the production Docker container (`python:3.12-slim` + Gunicorn). Provides automatic TLS/HTTPS termination, health monitoring, and horizontal scaling.
+1. **AWS App Runner / Amazon ECS Fargate + ALB / CloudFront**: Managed HTTPS ingress (`TLSv1.2+` / `TLSv1.3`) running the production Docker container (`python:3.12-slim` + Gunicorn). App Runner provides built-in TLS termination; ECS Fargate sits behind an Application Load Balancer with ACM TLS (`443`) + HTTP (`80`) redirect or a CloudFront HTTPS edge distribution (`https://*.cloudfront.net`). Flask trusts `X-Forwarded-Proto` / `CloudFront-Forwarded-Proto` via `ProxyFix`, enforces HTTPS (`FORCE_HTTPS=true`, exempting internal `/health` probes), and issues `Secure` cookies and HSTS headers.
 2. **Amazon RDS (PostgreSQL 15)**: Multi-AZ capable relational database in private VPC subnets. Stores Users, Events, Guests, Additional Attendees, and Communications logs.
 3. **Amazon S3**: Private object storage bucket (`AES256` server-side encryption, Block Public Access enabled) storing invitation PDFs accessed securely via time-limited presigned URLs.
 4. **Amazon SES (Simple Email Service)**: High-deliverability transactional email service dispatching personalized invitations and RSVP reminders.
@@ -172,7 +172,8 @@ aws cloudformation describe-stacks \
   --output table
 ```
 Key outputs returned:
-- `AppRunnerServiceUrl`: Direct public HTTPS endpoint (e.g. `https://xxxxxx.us-east-1.awsapprunner.com`)
+- `AppRunnerServiceUrl`: Direct public HTTPS endpoint (e.g. `https://xxxxxx.us-east-1.awsapprunner.com`) when `EnableAppRunner=true`
+- `EcsHttpsUrl`: Public HTTPS endpoint (`https://<alb-dns>` with `AcmCertificateArn` or `https://<dist>.cloudfront.net`) when `EnableEcsFargate=true`
 - `RDSEndpoint`: Private PostgreSQL endpoint
 - `S3BucketName`: Dedicated S3 invitation bucket
 - `ECRRepositoryUri`: ECR Docker registry URL

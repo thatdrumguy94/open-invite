@@ -37,6 +37,9 @@ env/
 .env.local
 *.pem
 *.key
+*.crt
+certs/
+docker/nginx/certs/
 
 # Unit test / coverage reports
 htmlcov/

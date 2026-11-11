@@ -282,3 +282,83 @@ def test_cmd_toggle_public_switching():
         res = cmd_toggle_public(args)
         assert res is True
         mock_off.assert_called_once()
+
+
+def test_discover_https_endpoints_all_providers():
+    from infra.aws_manager import discover_https_endpoints
+
+    mock_session = MagicMock()
+    mock_apprunner = MagicMock()
+    mock_apprunner.list_services.return_value = {
+        "ServiceSummaryList": [
+            {
+                "ServiceName": "prod-openinvite-app",
+                "ServiceUrl": "abc123.us-east-1.awsapprunner.com",
+                "Status": "RUNNING",
+            }
+        ]
+    }
+    mock_cloudfront = MagicMock()
+    mock_cloudfront.list_distributions.return_value = {
+        "DistributionList": {
+            "Items": [
+                {
+                    "Comment": "prod OpenInvite HTTPS Edge",
+                    "DomainName": "d111111abcdef8.cloudfront.net",
+                    "Status": "Deployed",
+                    "Origins": {"Items": [{"DomainName": "prod-openinvite-alb.us-east-1.elb.amazonaws.com"}]},
+                }
+            ]
+        }
+    }
+    mock_elbv2 = MagicMock()
+    mock_elbv2.describe_load_balancers.return_value = {
+        "LoadBalancers": [
+            {
+                "LoadBalancerName": "prod-openinvite-alb",
+                "LoadBalancerArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/prod-openinvite-alb/123",
+                "DNSName": "prod-openinvite-alb.us-east-1.elb.amazonaws.com",
+                "State": {"Code": "active"},
+            }
+        ]
+    }
+    mock_elbv2.describe_listeners.return_value = {
+        "Listeners": [{"Protocol": "HTTPS", "Port": 443}]
+    }
+
+    def client_side_effect(name):
+        return {
+            "apprunner": mock_apprunner,
+            "cloudfront": mock_cloudfront,
+            "elbv2": mock_elbv2,
+        }.get(name, MagicMock())
+
+    mock_session.client.side_effect = client_side_effect
+    endpoints = discover_https_endpoints(mock_session)
+    assert len(endpoints) == 3
+    assert endpoints[0]["url"] == "https://abc123.us-east-1.awsapprunner.com"
+    assert endpoints[1]["url"] == "https://d111111abcdef8.cloudfront.net"
+    assert endpoints[2]["url"] == "https://prod-openinvite-alb.us-east-1.elb.amazonaws.com"
+
+
+def test_cmd_public_url_prefers_https_edge(capsys):
+    from infra.aws_manager import cmd_public_url
+
+    mock_session = MagicMock()
+    args = MagicMock(region="us-east-1")
+    with patch("infra.aws_manager.get_aws_session", return_value=mock_session), \
+         patch(
+             "infra.aws_manager.discover_https_endpoints",
+             return_value=[
+                 {
+                     "provider": "CloudFront HTTPS",
+                     "url": "https://d111111abcdef8.cloudfront.net",
+                     "status": "Deployed",
+                 }
+             ],
+         ):
+        cmd_public_url(args)
+
+    captured = capsys.readouterr().out
+    assert "https://d111111abcdef8.cloudfront.net" in captured
+    assert "https://d111111abcdef8.cloudfront.net/auth/login" in captured

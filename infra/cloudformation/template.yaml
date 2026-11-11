@@ -48,6 +48,12 @@ Parameters:
     Default: invitations@example.com
     Description: Verified sender email address in Amazon SES
 
+  EmailProvider:
+    Type: String
+    Default: ses
+    AllowedValues: ['ses', 'console', 'smtp', 'sendgrid']
+    Description: Transactional email provider for deployed containers
+
   VpcId:
     Type: AWS::EC2::VPC::Id
     Description: The VPC where RDS PostgreSQL and the App Runner VPC Connector will reside (select default VPC)
@@ -62,9 +68,30 @@ Parameters:
     AllowedValues: ['true', 'false']
     Description: Whether to deploy AWS App Runner compute service (set false if subscription is pending)
 
+  EnableEcsFargate:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Whether to deploy Amazon ECS Fargate behind an Application Load Balancer with HTTPS
+
+  AcmCertificateArn:
+    Type: String
+    Default: ''
+    Description: Optional AWS Certificate Manager (ACM) ARN for ALB HTTPS:443 listener (custom domain). If empty and EnableCloudFrontHttps is true, CloudFront provides managed HTTPS.
+
+  EnableCloudFrontHttps:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Provision an Amazon CloudFront HTTPS distribution in front of the ECS ALB when AcmCertificateArn is omitted
+
 Conditions:
   DeployAppRunner: !Equals [!Ref EnableAppRunner, 'true']
   IsDBPublic: !Equals [!Ref DBPubliclyAccessible, 'true']
+  DeployEcs: !Equals [!Ref EnableEcsFargate, 'true']
+  HasAcmCert: !Not [!Equals [!Ref AcmCertificateArn, '']]
+  DeployEcsWithAcm: !And [!Condition DeployEcs, !Condition HasAcmCert]
+  DeployEcsCloudFront: !And [!Condition DeployEcs, !Equals [!Ref EnableCloudFrontHttps, 'true'], !Not [!Condition HasAcmCert]]
 
 Resources:
   # ============================================================================
@@ -255,6 +282,14 @@ Resources:
             RuntimeEnvironmentVariables:
               - Name: FLASK_ENV
                 Value: production
+              - Name: FORCE_HTTPS
+                Value: "true"
+              - Name: SESSION_COOKIE_SECURE
+                Value: "true"
+              - Name: PREFERRED_URL_SCHEME
+                Value: https
+              - Name: TRUST_PROXY_HEADERS
+                Value: "true"
               - Name: DATABASE_URL
                 Value: !Sub "postgresql://${DBMasterUsername}:${DBMasterPassword}@${PostgreSQLDatabase.Endpoint.Address}:${PostgreSQLDatabase.Endpoint.Port}/event_db"
               - Name: STORAGE_BACKEND
@@ -272,6 +307,298 @@ Resources:
               - Name: SECRET_KEY
                 Value: !Sub "prod-key-${AWS::StackId}"
 
+  # ============================================================================
+  # 7. OPTIONAL COMPUTE TIER (HTTPS): ECS Fargate + ALB + ACM / CloudFront
+  # ============================================================================
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: DeployEcs
+    Properties:
+      GroupDescription: Public HTTP/HTTPS ingress for Application Load Balancer
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Allow HTTP (redirected to HTTPS)
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: Allow HTTPS traffic
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-alb-sg"
+
+  EcsTaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: DeployEcs
+    Properties:
+      GroupDescription: Restrict ECS task ingress to ALB only
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: Allow app traffic from ALB only
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-ecs-task-sg"
+
+  DatabaseEcsIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: DeployEcs
+    Properties:
+      GroupId: !Ref DatabaseSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref EcsTaskSecurityGroup
+      Description: Allow PostgreSQL inbound from ECS Fargate tasks
+
+  EcsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: DeployEcs
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-ecs-task-execution-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  EcsTaskRole:
+    Type: AWS::IAM::Role
+    Condition: DeployEcs
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-ecs-task-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EcsS3AndSESAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt S3InvitationBucket.Arn
+                  - !Sub "${S3InvitationBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource: "*"
+
+  EcsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: DeployEcs
+    Properties:
+      LogGroupName: !Sub "/ecs/${EnvironmentName}-event-invitation-app"
+      RetentionInDays: 14
+
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Condition: DeployEcs
+    Properties:
+      ClusterName: !Sub "${EnvironmentName}-event-invitation-cluster"
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Condition: DeployEcs
+    Properties:
+      Name: !Sub "${EnvironmentName}-openinvite-alb"
+      Type: application
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      Subnets: !Ref SubnetIds
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  AlbTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: DeployEcs
+    Properties:
+      Name: !Sub "${EnvironmentName}-openinvite-tg"
+      Port: 5000
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: "200"
+
+  AlbHttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: DeployEcs
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - !If
+          - HasAcmCert
+          - Type: redirect
+            RedirectConfig:
+              Protocol: HTTPS
+              Port: '443'
+              Host: '#{host}'
+              Path: '/#{path}'
+              Query: '#{query}'
+              StatusCode: HTTP_301
+          - Type: forward
+            TargetGroupArn: !Ref AlbTargetGroup
+
+  AlbHttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: DeployEcsWithAcm
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref AcmCertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AlbTargetGroup
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: DeployEcsCloudFront
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "${EnvironmentName} OpenInvite HTTPS Edge"
+        HttpVersion: http2
+        Origins:
+          - Id: AlbOrigin
+            DomainName: !GetAtt ApplicationLoadBalancer.DNSName
+            OriginCustomHeaders:
+              - HeaderName: X-Forwarded-Proto
+                HeaderValue: https
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+        DefaultCacheBehavior:
+          TargetOriginId: AlbOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          MinTTL: 0
+          DefaultTTL: 0
+          MaxTTL: 0
+          ForwardedValues:
+            QueryString: true
+            Cookies:
+              Forward: all
+            Headers:
+              - Host
+              - Origin
+              - Referer
+              - Accept
+              - Accept-Language
+              - User-Agent
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+  EcsTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: DeployEcs
+    Properties:
+      Family: !Sub "${EnvironmentName}-event-invitation-task"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !GetAtt EcsTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      ContainerDefinitions:
+        - Name: openinvite-web
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/event-invitation-system:latest"
+          PortMappings:
+            - ContainerPort: 5000
+              Protocol: tcp
+          Environment:
+            - Name: FLASK_ENV
+              Value: production
+            - Name: FORCE_HTTPS
+              Value: "true"
+            - Name: SESSION_COOKIE_SECURE
+              Value: "true"
+            - Name: PREFERRED_URL_SCHEME
+              Value: https
+            - Name: TRUST_PROXY_HEADERS
+              Value: "true"
+            - Name: DATABASE_URL
+              Value: !Sub "postgresql://${DBMasterUsername}:${DBMasterPassword}@${PostgreSQLDatabase.Endpoint.Address}:${PostgreSQLDatabase.Endpoint.Port}/event_db"
+            - Name: STORAGE_BACKEND
+              Value: s3
+            - Name: S3_BUCKET_NAME
+              Value: !Ref S3InvitationBucket
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: EMAIL_PROVIDER
+              Value: !Ref EmailProvider
+            - Name: MAIL_DEFAULT_SENDER
+              Value: !Ref SenderEmailAddress
+            - Name: AUTO_SEED
+              Value: "true"
+            - Name: SECRET_KEY
+              Value: !Sub "prod-key-${AWS::StackId}"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref EcsLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  EcsService:
+    Type: AWS::ECS::Service
+    Condition: DeployEcs
+    DependsOn:
+      - AlbHttpListener
+    Properties:
+      ServiceName: !Sub "${EnvironmentName}-event-invitation-service"
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref EcsTaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: 1
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !Ref EcsTaskSecurityGroup
+      LoadBalancers:
+        - ContainerName: openinvite-web
+          ContainerPort: 5000
+          TargetGroupArn: !Ref AlbTargetGroup
+      Tags:
+        - Key: ListenerRef
+          Value: !If [HasAcmCert, !Ref AlbHttpsListener, !Ref AlbHttpListener]
+
 Outputs:
   AppRunnerServiceUrl:
     Condition: DeployAppRunner
@@ -279,6 +606,22 @@ Outputs:
     Value: !Sub "https://${AppRunnerService.ServiceUrl}"
     Export:
       Name: !Sub "${EnvironmentName}-AppRunnerServiceUrl"
+
+  EcsHttpsUrl:
+    Condition: DeployEcs
+    Description: Public HTTPS URL for the ECS Fargate deployment (ALB+ACM or CloudFront)
+    Value: !If
+      - HasAcmCert
+      - !Sub "https://${ApplicationLoadBalancer.DNSName}"
+      - !If
+        - DeployEcsCloudFront
+        - !Sub "https://${CloudFrontDistribution.DomainName}"
+        - !Sub "http://${ApplicationLoadBalancer.DNSName}"
+
+  AlbDnsName:
+    Condition: DeployEcs
+    Description: Application Load Balancer DNS name
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
 
   RDSEndpoint:
     Description: Amazon RDS PostgreSQL private endpoint
