@@ -20,6 +20,8 @@ class _CloudFrontProtoMiddleware:
         cf_proto = environ.get("HTTP_CLOUDFRONT_FORWARDED_PROTO", "").strip().lower()
         if cf_proto in ("http", "https"):
             environ["HTTP_X_FORWARDED_PROTO"] = cf_proto
+            if cf_proto == "https" and environ.get("HTTP_X_FORWARDED_PORT", "").strip() == "80":
+                environ["HTTP_X_FORWARDED_PORT"] = "443"
         return self.wsgi_app(environ, start_response)
 
 

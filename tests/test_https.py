@@ -78,19 +78,25 @@ def test_proxy_fix_x_forwarded_proto_https_and_headers(app, client):
 
 
 def test_cloudfront_forwarded_proto_normalized(app, client):
-    """CloudFront-Forwarded-Proto: https overrides internal HTTP ALB X-Forwarded-Proto."""
+    """CloudFront-Forwarded-Proto: https overrides internal HTTP ALB X-Forwarded-Proto/Port."""
     app.config["FORCE_HTTPS"] = True
 
-    resp = client.get(
-        "/",
-        headers={
-            "CloudFront-Forwarded-Proto": "https",
-            "X-Forwarded-Proto": "http",
-            "Host": "d123456.cloudfront.net",
-        },
-    )
+    cf_headers = {
+        "CloudFront-Forwarded-Proto": "https",
+        "X-Forwarded-Proto": "http",
+        "X-Forwarded-Port": "80",
+        "Host": "d123456.cloudfront.net",
+    }
+    resp = client.get("/", headers=cf_headers)
     assert resp.status_code == 200
     assert "Strict-Transport-Security" in resp.headers
+
+    protected_resp = client.get("/events/", headers=cf_headers)
+    assert protected_resp.status_code == 302
+    assert (
+        protected_resp.headers["Location"]
+        == "/auth/login?next=https://d123456.cloudfront.net/events/"
+    )
 
 
 def test_hsts_not_emitted_over_plain_http(app, client):
