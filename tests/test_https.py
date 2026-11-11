@@ -78,13 +78,14 @@ def test_proxy_fix_x_forwarded_proto_https_and_headers(app, client):
 
 
 def test_cloudfront_forwarded_proto_normalized(app, client):
-    """CloudFront-Forwarded-Proto: https is treated as HTTPS without redirect."""
+    """CloudFront-Forwarded-Proto: https overrides internal HTTP ALB X-Forwarded-Proto."""
     app.config["FORCE_HTTPS"] = True
 
     resp = client.get(
         "/",
         headers={
             "CloudFront-Forwarded-Proto": "https",
+            "X-Forwarded-Proto": "http",
             "Host": "d123456.cloudfront.net",
         },
     )
