@@ -494,9 +494,6 @@ Resources:
         Origins:
           - Id: AlbOrigin
             DomainName: !GetAtt ApplicationLoadBalancer.DNSName
-            OriginCustomHeaders:
-              - HeaderName: X-Forwarded-Proto
-                HeaderValue: https
             CustomOriginConfig:
               HTTPPort: 80
               OriginProtocolPolicy: http-only
@@ -520,6 +517,7 @@ Resources:
               - Accept
               - Accept-Language
               - User-Agent
+              - CloudFront-Forwarded-Proto
         ViewerCertificate:
           CloudFrontDefaultCertificate: true
 

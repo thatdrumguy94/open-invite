@@ -147,11 +147,6 @@ resource "aws_cloudfront_distribution" "app" {
     domain_name = aws_lb.app[0].dns_name
     origin_id   = "alb-origin"
 
-    custom_header {
-      name  = "X-Forwarded-Proto"
-      value = "https"
-    }
-
     custom_origin_config {
       http_port              = 80
       https_port             = 443
@@ -172,7 +167,7 @@ resource "aws_cloudfront_distribution" "app" {
 
     forwarded_values {
       query_string = true
-      headers      = ["Host", "Origin", "Referer", "Accept", "Accept-Language", "User-Agent"]
+      headers      = ["Host", "Origin", "Referer", "Accept", "Accept-Language", "User-Agent", "CloudFront-Forwarded-Proto"]
 
       cookies {
         forward = "all"
