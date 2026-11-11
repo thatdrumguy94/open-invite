@@ -11,17 +11,17 @@ migrate = Migrate()
 
 
 class _CloudFrontProtoMiddleware:
-    """Normalize CloudFront-Forwarded-Proto header to X-Forwarded-Proto when absent."""
+    """Propagate CloudFront-Forwarded-Proto to X-Forwarded-Proto (overrides internal HTTP ALB hop)."""
 
     def __init__(self, wsgi_app):
         self.wsgi_app = wsgi_app
 
     def __call__(self, environ, start_response):
-        if (
-            "HTTP_X_FORWARDED_PROTO" not in environ
-            and "HTTP_CLOUDFRONT_FORWARDED_PROTO" in environ
-        ):
-            environ["HTTP_X_FORWARDED_PROTO"] = environ["HTTP_CLOUDFRONT_FORWARDED_PROTO"]
+        cf_proto = environ.get("HTTP_CLOUDFRONT_FORWARDED_PROTO", "").strip().lower()
+        if cf_proto in ("http", "https"):
+            environ["HTTP_X_FORWARDED_PROTO"] = cf_proto
+            if cf_proto == "https" and environ.get("HTTP_X_FORWARDED_PORT", "").strip() == "80":
+                environ["HTTP_X_FORWARDED_PORT"] = "443"
         return self.wsgi_app(environ, start_response)
 
 

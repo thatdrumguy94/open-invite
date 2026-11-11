@@ -3,7 +3,7 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-57%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-59%20passed-brightgreen.svg)]()
 
 **OpenInvite** is a modern, lightweight, self-hosted event invitation and RSVP platform. It gives event organizers an independent, privacy-first alternative to ad-laden corporate event websites.
 
