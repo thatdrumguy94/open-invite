@@ -849,8 +849,26 @@ def cmd_toggle_public(args):
         return False
 
 
+def _get_current_public_cidr() -> str:
+    """Detect caller's public IPv4 as a /32 CIDR, falling back to 0.0.0.0/0."""
+    import urllib.request
+
+    try:
+        ip = (
+            urllib.request.urlopen("https://checkip.amazonaws.com", timeout=5)
+            .read()
+            .decode("utf-8")
+            .strip()
+        )
+        if ip:
+            return f"{ip}/32"
+    except Exception:
+        pass
+    return "0.0.0.0/0"
+
+
 def cmd_toggle_rds(args):
-    """Toggle public inbound access (0.0.0.0/0 on port 5432) on Amazon RDS."""
+    """Toggle external inbound access (port 5432) on Amazon RDS while preserving VPC SG rules."""
     session = get_aws_session(args.region)
     ec2 = session.client("ec2")
 
@@ -873,37 +891,54 @@ def cmd_toggle_rds(args):
             return False
 
         sg_id = target_sg["GroupId"]
-        has_public = any(
-            p.get("FromPort") == 5432 and any(r.get("CidrIp") == "0.0.0.0/0" for r in p.get("IpRanges", []))
-            for p in target_sg.get("IpPermissions", [])
-        )
+        external_ipv4 = []
+        external_ipv6 = []
+        for perm in target_sg.get("IpPermissions", []):
+            from_port = perm.get("FromPort")
+            to_port = perm.get("ToPort")
+            if from_port is not None and to_port is not None and from_port <= 5432 <= to_port:
+                for r in perm.get("IpRanges", []):
+                    if r.get("CidrIp"):
+                        external_ipv4.append({"CidrIp": r["CidrIp"]})
+                for r in perm.get("Ipv6Ranges", []):
+                    if r.get("CidrIpv6"):
+                        external_ipv6.append({"CidrIpv6": r["CidrIpv6"]})
 
-        if has_public:
-            print(f"RDS currently has Public Access (0.0.0.0/0:5432 enabled on {sg_id}).")
-            print("Revoking public access rule (making RDS private to VPC only)...")
+        if external_ipv4 or external_ipv6:
+            cidrs = [r["CidrIp"] for r in external_ipv4] + [r["CidrIpv6"] for r in external_ipv6]
+            print(f"RDS currently has External Access enabled on {sg_id}: {', '.join(cidrs)}")
+            print("Revoking all external port 5432 CIDR rules (keeping VPC security groups intact)...")
+            revoke_perm = {
+                "IpProtocol": "tcp",
+                "FromPort": 5432,
+                "ToPort": 5432,
+            }
+            if external_ipv4:
+                revoke_perm["IpRanges"] = external_ipv4
+            if external_ipv6:
+                revoke_perm["Ipv6Ranges"] = external_ipv6
+
             ec2.revoke_security_group_ingress(
                 GroupId=sg_id,
-                IpPermissions=[{
-                    "IpProtocol": "tcp",
-                    "FromPort": 5432,
-                    "ToPort": 5432,
-                    "IpRanges": [{"CidrIp": "0.0.0.0/0"}]
-                }]
+                IpPermissions=[revoke_perm],
             )
             print("[+] RDS is now PRIVATE (accessible only within VPC compute).")
         else:
+            cidr = getattr(args, "cidr", None) or (
+                "0.0.0.0/0" if getattr(args, "all", False) else _get_current_public_cidr()
+            )
             print(f"RDS currently has Private Access only on {sg_id}.")
-            print("Authorizing public access rule (0.0.0.0/0:5432 for external tools/tests)...")
+            print(f"Authorizing external access rule ({cidr}:5432)...")
             ec2.authorize_security_group_ingress(
                 GroupId=sg_id,
                 IpPermissions=[{
                     "IpProtocol": "tcp",
                     "FromPort": 5432,
                     "ToPort": 5432,
-                    "IpRanges": [{"CidrIp": "0.0.0.0/0"}]
+                    "IpRanges": [{"CidrIp": cidr, "Description": "External IDE/tool access via toggle-rds"}],
                 }]
             )
-            print("[+] RDS is now PUBLICLY ACCESSIBLE (0.0.0.0/0 on port 5432).")
+            print(f"[+] RDS is now EXTERNALLY ACCESSIBLE ({cidr} on port 5432).")
         return True
     except ClientError as e:
         print(f"Error toggling RDS access: {e}")
@@ -976,7 +1011,9 @@ def main():
     subparsers.add_parser("toggle-public", help="Toggle the AWS Fargate public compute between ONLINE and OFFLINE")
 
     # toggle-rds
-    subparsers.add_parser("toggle-rds", help="Toggle external public access (port 5432) on Amazon RDS")
+    rds_parser = subparsers.add_parser("toggle-rds", help="Toggle external public access (port 5432) on Amazon RDS")
+    rds_parser.add_argument("--cidr", default=None, help="Explicit CIDR to authorize when enabling (default: current public IP /32)")
+    rds_parser.add_argument("--all", action="store_true", default=False, help="Authorize 0.0.0.0/0 instead of only current public IP when enabling")
 
     args = parser.parse_args()
 

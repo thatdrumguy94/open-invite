@@ -42,7 +42,7 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      - name: Execute Automated Test Suite (57 Tests)
+      - name: Execute Automated Test Suite (59 Tests)
         env:
           FLASK_ENV: testing
           SECRET_KEY: test-key-ci-environment-run

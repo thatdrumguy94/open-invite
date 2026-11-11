@@ -362,3 +362,93 @@ def test_cmd_public_url_prefers_https_edge(capsys):
     captured = capsys.readouterr().out
     assert "https://d111111abcdef8.cloudfront.net" in captured
     assert "https://d111111abcdef8.cloudfront.net/auth/login" in captured
+
+
+def test_cmd_toggle_rds_revokes_any_external_cidr():
+    from infra.aws_manager import cmd_toggle_rds
+
+    mock_session = MagicMock()
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_vpcs.return_value = {"Vpcs": [{"VpcId": "vpc-123"}]}
+    mock_ec2.describe_security_groups.return_value = {
+        "SecurityGroups": [
+            {
+                "GroupId": "sg-rds-123",
+                "GroupName": "prod-DatabaseSecurityGroup",
+                "IpPermissions": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 5432,
+                        "ToPort": 5432,
+                        "UserIdGroupPairs": [{"GroupId": "sg-ecs"}],
+                        "IpRanges": [{"CidrIp": "136.50.212.250/32"}],
+                        "Ipv6Ranges": [],
+                    }
+                ],
+            }
+        ]
+    }
+    mock_session.client.return_value = mock_ec2
+
+    args = MagicMock(region="us-east-1", cidr=None, all=False)
+    with patch("infra.aws_manager.get_aws_session", return_value=mock_session):
+        assert cmd_toggle_rds(args) is True
+        mock_ec2.revoke_security_group_ingress.assert_called_once_with(
+            GroupId="sg-rds-123",
+            IpPermissions=[
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 5432,
+                    "ToPort": 5432,
+                    "IpRanges": [{"CidrIp": "136.50.212.250/32"}],
+                }
+            ],
+        )
+
+
+def test_cmd_toggle_rds_opens_current_ip_when_private():
+    from infra.aws_manager import cmd_toggle_rds
+
+    mock_session = MagicMock()
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_vpcs.return_value = {"Vpcs": [{"VpcId": "vpc-123"}]}
+    mock_ec2.describe_security_groups.return_value = {
+        "SecurityGroups": [
+            {
+                "GroupId": "sg-rds-123",
+                "GroupName": "prod-DatabaseSecurityGroup",
+                "IpPermissions": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 5432,
+                        "ToPort": 5432,
+                        "UserIdGroupPairs": [{"GroupId": "sg-ecs"}],
+                        "IpRanges": [],
+                        "Ipv6Ranges": [],
+                    }
+                ],
+            }
+        ]
+    }
+    mock_session.client.return_value = mock_ec2
+
+    args = MagicMock(region="us-east-1", cidr=None, all=False)
+    with patch("infra.aws_manager.get_aws_session", return_value=mock_session), \
+         patch("infra.aws_manager._get_current_public_cidr", return_value="198.51.100.42/32"):
+        assert cmd_toggle_rds(args) is True
+        mock_ec2.authorize_security_group_ingress.assert_called_once_with(
+            GroupId="sg-rds-123",
+            IpPermissions=[
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 5432,
+                    "ToPort": 5432,
+                    "IpRanges": [
+                        {
+                            "CidrIp": "198.51.100.42/32",
+                            "Description": "External IDE/tool access via toggle-rds",
+                        }
+                    ],
+                }
+            ],
+        )
